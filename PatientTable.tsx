@@ -1,0 +1,2543 @@
+import * as React from 'react';
+
+import {
+  Box,
+  Button,
+  Avatar,
+  Chip,
+  Divider,
+  ThemeProvider,
+  CssBaseline,
+  TextField,
+  InputAdornment,
+  Select,
+  MenuItem,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableContainer,
+  TableSortLabel,
+  Paper,
+  IconButton,
+  Typography,
+  Alert,
+  Skeleton,
+  CircularProgress,
+  Tooltip,
+  Drawer,
+  FormControl,
+  FormLabel,
+} from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import FilterAltIcon from '@mui/icons-material/FilterAlt';
+import FilterAltOffIcon from '@mui/icons-material/FilterAltOff';
+import SearchIcon from '@mui/icons-material/Search';
+import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
+import KeyboardArrowLeftIcon from '@mui/icons-material/KeyboardArrowLeft';
+import {
+  Person2Outlined,
+  RemoveRedEye,
+  WarningAmberRounded,
+  CloseRounded,
+  AddIcCallOutlined,
+  FilterAltOff,
+} from '@mui/icons-material';
+import LockOutlined from '@mui/icons-material/LockOutlined';
+import TableFilter, { type FilterOp } from '../tableFilter/TableFilter';
+import { Info } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { usePermissions } from '../../../../contexts/PermissionsContext';
+import NoPermissionPage from '../NoPermisson';
+import { BasePathContext } from '../BasePathContext';
+import formatPhone from '../../../../utils/formatPhone';
+import { encodeIdForPath } from '../../../../utils/pathId';
+import { fetchPatients } from '../../services/PatientAPI';
+import { useFacility } from '../../../../contexts/FacilityContext';
+import { fetchFloorOptions, fetchUnitOptions } from '../../services/DropdownAPIs';
+import type { VitalCondition } from '../tableFilter/VitalFilter';
+import VitalFilter from '../tableFilter/VitalFilter';
+import { useFacilityPicklist } from '../../../../contexts/FacilityPicklistContext';
+import { SegmentedSlideToggle } from '../../../clinics/componenet/Device management/SegmentedSlideToggle';
+import DraftPatientTable from '../../../clinics/componenet/PatientManagement/DraftPatientTable';
+import type { EnumItem } from '../../services/EnumAPI';
+import theme from '../../../../Theme';
+
+
+/* ===================== Types & Utils ===================== */
+
+type Order = 'asc' | 'desc';
+type SortKey = keyof Patient | null;
+
+// MUI Material chip/alert color tokens used throughout this file
+type ChipColor = 'success' | 'error' | 'warning' | 'primary' | 'info' | 'secondary' | 'default';
+
+// Renders a soft/tinted pill background for a given palette color, derived from the app theme
+function softChipSx(color: ChipColor) {
+  if (color === 'default') {
+    return {
+      bgcolor: theme.palette.grey[200],
+      color: theme.palette.text.secondary,
+      fontWeight: 600,
+      borderRadius: 1.5,
+    };
+  }
+  const palette = (theme.palette as any)[color];
+  return {
+    bgcolor: alpha(palette?.main ?? theme.palette.grey[500], 0.16),
+    color: palette?.dark ?? theme.palette.text.primary,
+    fontWeight: 600,
+    borderRadius: 1.5,
+  };
+}
+
+type AlertCount = {
+  patientFhirId: string;
+  hypoglycemicAlertCount: number;
+  hyperglycemicAlertCount: number;
+  bgAlertCount: number;
+  heartFailureAlertCount: number;
+  highBPAlertCount: number;
+  lowBPAlertCount: number;
+  totalAlertCount: number;
+};
+
+interface Patient {
+  patientId: string;
+  healthlakeId: string;
+  mrn: string;
+  name: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  photo?: { contentType: string; dataUrl: string } | null;
+  dob: string;
+  age: number;
+  status: string;
+  gender: string;
+  contactInfo: { email: string; phone: string };
+  programDisplay?: string | null;
+  acuity: string;
+  acuityCode?: 'RED' | 'YELLOW' | 'GREEN' | null;
+  acuityScore?: number | null;
+  alertCount?: AlertCount | null;
+}
+
+type AlertBadgeItem = {
+  key:
+  | 'hypoglycemicAlertCount'
+  | 'hyperglycemicAlertCount'
+  | 'heartFailureAlertCount'
+  | 'highBPAlertCount'
+  | 'lowBPAlertCount'
+  | 'bgAlertCount';
+  label: string;
+  color: string;
+};
+
+const ALERT_ITEMS: AlertBadgeItem[] = [
+  {
+    key: 'hypoglycemicAlertCount',
+    label: 'Hypoglycemic Alert',
+    color: '#ff1744',
+  },
+  {
+    key: 'hyperglycemicAlertCount',
+    label: 'Hyperglycemic Alert',
+    color: '#b620e0',
+  },
+  {
+    key: 'heartFailureAlertCount',
+    label: 'Heart Failure Alert',
+    color: '#ff9800',
+  },
+  {
+    key: 'highBPAlertCount',
+    label: 'High BP Alert',
+    color: '#3f51b5',
+  },
+  {
+    key: 'lowBPAlertCount',
+    label: 'Low BP Alert',
+    color: '#29b6f6',
+  },
+  {
+    key: 'bgAlertCount',
+    label: 'BG Alert',
+    color: '#d4b000',
+  },
+];
+
+function AlertDot({
+  count,
+  color,
+}: {
+  count: number;
+  color: string;
+}) {
+  return (
+    <Box
+      sx={{
+        minWidth: 18,
+        height: 18,
+        px: count > 9 ? 0.5 : 0,
+        borderRadius: '999px',
+        bgcolor: color,
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: 700,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        lineHeight: 1,
+        boxShadow: `0 1px 3px ${alpha(color, 0.5)}`,
+      }}
+    >
+      {count}
+    </Box>
+  );
+}
+
+function PatientAlerts({ alerts }: { alerts?: Patient['alertCount'] | null }) {
+  if (!alerts || !alerts.totalAlertCount) {
+    return (
+      <Typography variant="caption" sx={{ color: 'text.secondary', paddingLeft: '5px' }}>
+        -
+      </Typography>
+    );
+  }
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 0.75,
+        alignItems: 'center',
+      }}
+    >
+      {ALERT_ITEMS.map((item) => {
+        const value = alerts[item.key] ?? 0;
+        if (!value) return null;
+
+        return <AlertDot key={item.key} count={value} color={item.color} />;
+      })}
+    </Box>
+  );
+}
+
+
+function PatientAlertsTooltipContent({
+  alerts,
+  legendItems,
+}: {
+  alerts?: Patient['alertCount'] | null;
+  legendItems: EnumItem[];
+}) {
+  if (!alerts || !alerts.totalAlertCount) {
+    return (
+      <Typography variant="body2" sx={{ color: '#fff' }}>
+        No alerts
+      </Typography>
+    );
+  }
+
+  const getCountByName = (name: string) => {
+    switch (name) {
+      case 'HypoglycemicAlert':
+        return alerts.hypoglycemicAlertCount ?? 0;
+      case 'HyperglycemicAlert':
+        return alerts.hyperglycemicAlertCount ?? 0;
+      case 'BGAlert':
+        return alerts.bgAlertCount ?? 0;
+      case 'HeartFailureAlert':
+        return alerts.heartFailureAlertCount ?? 0;
+      case 'HighBPAlert':
+        return alerts.highBPAlertCount ?? 0;
+      case 'LowBPAlert':
+        return alerts.lowBPAlertCount ?? 0;
+      default:
+        return 0;
+    }
+  };
+
+  const getColorByName = (name: string) => {
+    switch (name) {
+      case 'HypoglycemicAlert':
+        return '#ff1744';
+      case 'HyperglycemicAlert':
+        return '#b620e0';
+      case 'BGAlert':
+        return '#d4b000';
+      case 'HeartFailureAlert':
+        return '#ff9800';
+      case 'HighBPAlert':
+        return '#3f51b5';
+      case 'LowBPAlert':
+        return '#29b6f6';
+      default:
+        return '#bdbdbd';
+    }
+  };
+
+  const activeAlerts = legendItems.filter((item) => getCountByName(item.name) > 0);
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, maxWidth: 320 }}>
+      <Typography variant="subtitle2" sx={{ color: '#fff' }}>
+        Patient Alerts
+      </Typography>
+
+      {activeAlerts.map((item) => {
+        const count = getCountByName(item.name);
+
+        return (
+          <Box
+            key={item.name}
+            sx={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 1,
+            }}
+          >
+            <Box
+              sx={{
+                width: 12,
+                height: 12,
+                borderRadius: '50%',
+                bgcolor: getColorByName(item.name),
+                mt: '4px',
+                flexShrink: 0,
+              }}
+            />
+            <Box>
+              <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700 }}>
+                {item.label} Count: {count}
+              </Typography>
+              <Typography variant="caption" sx={{ color: '#fff' }}>
+                {item.description ?? 'No description available.'}
+              </Typography>
+            </Box>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+function AlertsLegend({
+  items,
+  onClose,
+}: {
+  items: EnumItem[];
+  onClose?: () => void;
+}) {
+  const getAlertColor = (name: string) => {
+    switch (name) {
+      case 'HypoglycemicAlert':
+        return '#ff1744';
+      case 'HyperglycemicAlert':
+        return '#b620e0';
+      case 'BGAlert':
+        return '#d4b000';
+      case 'HeartFailureAlert':
+        return '#ff9800';
+      case 'HighBPAlert':
+        return '#3f51b5';
+      case 'LowBPAlert':
+        return '#29b6f6';
+      default:
+        return '#bdbdbd';
+    }
+  };
+
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        borderRadius: 2,
+        p: 2,
+        minWidth: 280,
+        height: '100%',
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'start',
+          justifyContent: 'space-between',
+          gap: 1,
+          mb: 1.5,
+        }}
+      >
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          Patient Alert&apos;s Guide
+        </Typography>
+
+        {onClose && (
+          <IconButton
+            size="small"
+            onClick={onClose}
+            aria-label="Close alerts guide"
+            sx={{
+              width: 28,
+              height: 28,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: '50%',
+            }}
+          >
+            <CloseRounded fontSize="small" />
+          </IconButton>
+        )}
+      </Box>
+
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {items.map((item) => (
+          <Box key={item.name}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+              <Box
+                sx={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  bgcolor: getAlertColor(item.name),
+                  flexShrink: 0,
+                  mt: '4px',
+                }}
+              />
+              <Box>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  {item.label}
+                </Typography>
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {item.description ?? 'No description available.'}
+                </Typography>
+              </Box>
+            </Box>
+          </Box>
+        ))}
+      </Box>
+    </Paper>
+  );
+}
+
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = React.useState<T>(value);
+  React.useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
+
+/* ===================== API ===================== */
+
+type IncomingApiRow = {
+  id: string;
+  healthLakeId: string;
+  mrn: string;
+  firstName: string;
+  lastName: string;
+  birthDay: string;
+  email: string | null;
+  contactInfo: string | null;
+  gender: string | null;
+  acuity: string;
+  programDisplay?: string | null;
+  acuityScore: string | number | null;
+  status: string;
+  photoUrl: string | null;
+  alertCount?: AlertCount | null;
+};
+
+type IncomingApiResponse = {
+  items: IncomingApiRow[];
+  totalItems: number;
+  pageIndex: number;
+  pageSize: number;
+  totalPages: number;
+  first: string;
+  next?: string;
+  last: string;
+};
+
+async function fetchPatientsV2(
+  params: {
+    pageIndex?: number;
+    pageSize?: number;
+    name?: string;
+    orderByKey?: string;
+    direction?: string;
+    filterString?: string;
+  },
+  selectedFacilityId?: string | null
+): Promise<IncomingApiResponse> {
+  const resp = await fetchPatients(params, selectedFacilityId);
+  if (resp.data && resp.meta) {
+    const { data, meta } = resp;
+    return {
+      items: data as IncomingApiRow[],
+      totalItems: Number(meta.totalItems ?? 0),
+      pageIndex: Number(meta.pageIndex ?? 1),
+      pageSize: Number(meta.pageSize ?? 10),
+      totalPages: Number(meta.totalPages ?? 1),
+      first: String(meta.first ?? ''),
+      next: meta.next ? String(meta.next) : undefined,
+      last: String(meta.last ?? ''),
+    };
+  }
+  return resp as IncomingApiResponse;
+}
+
+function mapApiRowToPatient(row: IncomingApiRow): Patient {
+  const name = `${row.firstName ?? ''} ${row.lastName ?? ''}`.trim();
+  const age = calcAge(row.birthDay);
+  const a = String(row.acuity || '').toLowerCase();
+
+  let acuity: Patient['acuity'];
+  if (a === 'green' || a === 'stable') acuity = 'Stable';
+  else if (a === 'critical' || a === 'red') acuity = 'Critical';
+  else if (a === 'observation' || a === 'yellow') acuity = 'Observation';
+  else acuity = 'N/A';
+
+  let score: number | null = null;
+  if (row.acuityScore !== null && row.acuityScore !== undefined) {
+    if (typeof row.acuityScore === 'number') {
+      score = Number.isFinite(row.acuityScore) ? row.acuityScore : null;
+    } else if (typeof row.acuityScore === 'string') {
+      const s = row.acuityScore.trim();
+      if (s && s.toLowerCase() !== 'n/a') {
+        const n = Number.parseFloat(s);
+        score = Number.isFinite(n) ? n : null;
+      }
+    }
+  }
+
+  const photo = row.photoUrl
+    ? { contentType: 'image/jpeg', dataUrl: `data:image/jpeg;base64,${row.photoUrl}` }
+    : null;
+
+  return {
+    patientId: row.id,
+    healthlakeId: row.healthLakeId,
+    mrn: row.mrn || row.id,
+    name,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    photo,
+    dob: row.birthDay,
+    status: normalizeStatus(row.status),
+    age,
+    gender: row.gender ?? 'unknown',
+    contactInfo: { email: row.email ?? '', phone: row.contactInfo ?? '' },
+    programDisplay: row.programDisplay,
+    acuity,
+    acuityCode: null,
+    acuityScore: score,
+    alertCount: row.alertCount ?? null,
+  };
+}
+
+function normalizeStatus(
+  s?: string
+):
+  | 'Active'
+  | 'Pending'
+  | 'Onboarding'
+  | 'Approved'
+  | 'Inactive'
+  | 'Discharged'
+  | 'Deceased'
+  | 'Leave'
+  | 'New'
+  | 'N/A' {
+  if (!s) return 'N/A';
+
+  const v = s.trim().toLowerCase();
+
+  if (v === 'active') return 'Active';
+  if (v === 'pending') return 'Pending';
+  if (v === 'onboarding' || v === 'onbording' || v === 'on boarding') return 'Onboarding';
+  if (v === 'approved' || v === 'approve') return 'Approved';
+  if (v === 'inactive' || v === 'in-active') return 'Inactive';
+  if (v === 'discharged' || v === 'discharge') return 'Discharged';
+  if (v === 'deceased' || v === 'dead') return 'Deceased';
+  if (v === 'leave' || v === 'on leave') return 'Leave';
+  if (v === 'new' || v === 'new patient') return 'New';
+
+  return 'N/A';
+}
+
+export function calcAge(iso: string): number {
+  if (!iso) return 0;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 0;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  return Math.max(0, age);
+}
+
+const mapOrderByToApiKey = (key: keyof Patient): string => {
+  switch (key) {
+    case 'mrn':
+      return 'MRN';
+    case 'name':
+      return 'FirstName';
+    case 'acuity':
+      return 'AcuityScore';
+    case 'status':
+      return 'Status';
+    default:
+      return 'CreatedAt';
+  }
+};
+
+const toApiAcuity = (ui: string): string => {
+  switch ((ui || '').toLowerCase()) {
+    case 'stable':
+      return 'green';
+    case 'critical':
+      return 'red';
+    case 'observation':
+      return 'yellow';
+    case 'n/a':
+      return 'na';
+    default:
+      return (ui || '').toLowerCase();
+  }
+};
+
+const toApiFall = (ui: string): string => (ui || '').toLowerCase();
+const toApiGender = (ui: string): string => (ui || '').toLowerCase();
+
+const opToSymbol = (op: FilterOp): '=' | '!=' | '>' | '<' =>
+  op === 'eq' ? '=' : op === 'neq' ? '!=' : op === 'gt' ? '>' : '<';
+
+function pad2(n: number) {
+  return String(n).padStart(2, '0');
+}
+
+function ymdUTC(y: number, m1: number, d: number): string {
+  const dt = new Date(Date.UTC(y, m1, d));
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+
+function addDaysUTC(y: number, m1: number, d: number, delta: number): string {
+  const dt = new Date(Date.UTC(y, m1, d));
+  dt.setUTCDate(dt.getUTCDate() + delta);
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+
+function ageToBoundaryDates(ageStr?: string, now = new Date()) {
+  if (!ageStr) return null;
+  const a = Number(ageStr);
+  if (!Number.isFinite(a) || a < 0 || a > 150) return null;
+
+  const y = now.getUTCFullYear();
+  const m1 = now.getUTCMonth();
+  const d = now.getUTCDate();
+
+  const latestYear = y - Math.floor(a);
+  const earliestYear = latestYear - 1;
+
+  const latestDate = ymdUTC(latestYear, m1, d);
+  const earliestDate = ymdUTC(earliestYear, m1, d);
+  const earliestDatePlusOne = addDaysUTC(earliestYear, m1, d, 1);
+
+  return { earliestDate, earliestDatePlusOne, latestDate };
+}
+
+/* ===================== Component ===================== */
+
+export default function PatientTable() {
+  const navigate = useNavigate();
+  const basePath = React.useContext(BasePathContext);
+  const { selectedFacilityId } = useFacility();
+  const { picklist, picklistLoading, enum: enumData } = useFacilityPicklist();
+
+  const [viewMode, setViewMode] = React.useState<'ONBOARDED' | 'DRAFTS'>('ONBOARDED');
+
+  const [patients, setPatients] = React.useState<Patient[]>([]);
+  const [serverPageIndex, setServerPageIndex] = React.useState<number>(1);
+  const [serverTotalPages, setServerTotalPages] = React.useState<number>(1);
+  const rowsPerPage = 10;
+
+  const [showAlertsLegend, setShowAlertsLegend] = React.useState(false);
+
+  const [orderBy, setOrderBy] = React.useState<SortKey>(null);
+  const [order, setOrder] = React.useState<Order>('asc');
+
+  const [searchText, setSearchText] = React.useState('');
+  const debouncedSearchText = useDebounce(searchText, 500);
+
+  const [filterAcuity, setFilterAcuity] = React.useState<string[]>([]);
+  const [filterAcuityOp, setFilterAcuityOp] = React.useState<FilterOp>('eq');
+
+  const [filterStatus, setFilterStatus] = React.useState<string[]>(['Active']);
+  const [filterStatusOp, setFilterStatusOp] = React.useState<FilterOp>('eq');
+
+  const [filterGender, setFilterGender] = React.useState<string[]>([]);
+  const [filterGenderOp, setFilterGenderOp] = React.useState<FilterOp>('eq');
+
+  const [filterAge, setFilterAge] = React.useState<string[]>([]);
+  const [filterAgeOp, setFilterAgeOp] = React.useState<FilterOp>('eq');
+
+  const [filterFallPrediction, setFilterFallPrediction] = React.useState<string[]>([]);
+  const [filterFallPredictionOp, setFilterFallPredictionOp] = React.useState<FilterOp>('eq');
+
+  const [filterVitals, setFilterVitals] = React.useState<VitalCondition[]>([]);
+
+  const [floorOptions, setFloorOptions] = React.useState<
+    { id: string; floorId: number; floorDesc: string }[]
+  >([]);
+  const [unitOptions, setUnitOptions] = React.useState<
+    { id: string; unitId: number; unitDesc: string }[]
+  >([]);
+  const [filterFloor, setFilterFloor] = React.useState<string[]>([]);
+  const [filterFloorOp, setFilterFloorOp] = React.useState<FilterOp>('eq');
+
+  const [filterUnit, setFilterUnit] = React.useState<string[]>([]);
+  const [filterUnitOp, setFilterUnitOp] = React.useState<FilterOp>('eq');
+
+  const [draftAcuity, setDraftAcuity] = React.useState<string[]>([]);
+  const [draftAcuityOp, setDraftAcuityOp] = React.useState<FilterOp>('eq');
+
+  const [draftStatus, setDraftStatus] = React.useState<string[]>([]);
+  const [draftStatusOp, setDraftStatusOp] = React.useState<FilterOp>('eq');
+
+  const [draftFall, setDraftFall] = React.useState<string[]>([]);
+  const [draftFallOp, setDraftFallOp] = React.useState<FilterOp>('eq');
+
+  const [draftFloor, setDraftFloor] = React.useState<string[]>([]);
+  const [draftFloorOp, setDraftFloorOp] = React.useState<FilterOp>('eq');
+
+  const [draftUnit, setDraftUnit] = React.useState<string[]>([]);
+  const [draftUnitOp, setDraftUnitOp] = React.useState<FilterOp>('eq');
+
+  const [draftGender, setDraftGender] = React.useState<string[]>([]);
+  const [draftGenderOp, setDraftGenderOp] = React.useState<FilterOp>('eq');
+
+  const [draftAge, setDraftAge] = React.useState<string[]>([]);
+  const [draftAgeOp, setDraftAgeOp] = React.useState<FilterOp>('eq');
+
+  const [draftVitals, setDraftVitals] = React.useState<VitalCondition[]>([]);
+
+  const [appliedFilterString, setAppliedFilterString] =
+    React.useState<string | undefined>('status=Active');
+
+  const [openFilter, setOpenFilter] = React.useState<
+    null | 'fall' | 'acuity' | 'gender' | 'age' | 'status' | 'floor' | 'unit' | 'vitals'
+  >(null);
+
+  const [loading, setLoading] = React.useState(true);
+  const [noPermission, setNoPermission] = React.useState<null | {
+    action: 'create patients' | 'view patient' | 'view the patients list';
+  }>(null);
+
+  const { can, loading: permissionsLoading, facilityId } = usePermissions();
+  const canCreatePatients = can('Patient', 'Create');
+  const canListPatients = can('Patient', 'List');
+  const canViewPatients = can('Patient', 'read');
+
+  const [openFilters, setOpenFilters] = React.useState(false);
+
+  const [statusAlert, setStatusAlert] = React.useState<{ text: string } | null>(null);
+  const alertTimerRef = React.useRef<number | null>(null);
+
+  const handleViewSelect = (next: 'ONBOARDED' | 'DRAFTS') => {
+    setViewMode(next);
+  };
+
+  const showStatusAlert = (text: string) => {
+    setStatusAlert({ text });
+    if (alertTimerRef.current) window.clearTimeout(alertTimerRef.current);
+    alertTimerRef.current = window.setTimeout(() => setStatusAlert(null), 4000);
+  };
+
+  const patientListConfig = picklist?.patientList;
+
+  const showFallFilter = patientListConfig?.filters?.fallPrediction ?? false;
+  const showAcuityFilter = patientListConfig?.filters?.acuity ?? false;
+  const showGenderFilter = patientListConfig?.filters?.gender ?? false;
+  const showAgeFilter = patientListConfig?.filters?.age ?? false;
+  const showStatusFilter = patientListConfig?.filters?.status ?? false;
+  const showFloorFilter = patientListConfig?.filters?.floor ?? false;
+  const showUnitFilter = patientListConfig?.filters?.unit ?? false;
+  const showVitalsFilter = patientListConfig?.filters?.vitals ?? false;
+
+  const showMrnColumn = patientListConfig?.columns?.mrn ?? false;
+  const showNameColumn = patientListConfig?.columns?.name ?? false;
+  const showContactInfoColumn = patientListConfig?.columns?.contactInfo ?? false;
+  const showAcuityColumn = patientListConfig?.columns?.acuity ?? false;
+  const showStatusColumn = patientListConfig?.columns?.status ?? false;
+  const showEnrolledProgramColumn = patientListConfig?.columns?.enrolledProgram ?? false;
+  const showActionColumn = patientListConfig?.columns?.action ?? false;
+  const showAlertsColumn = patientListConfig?.columns?.alerts ?? false;
+
+  const showDraftToggle = patientListConfig?.showDraftToggle ?? false;
+
+  const patientAlertLegened = enumData?.enums?.PatientAlertType ?? [];
+
+  React.useEffect(() => {
+    return () => {
+      if (alertTimerRef.current) window.clearTimeout(alertTimerRef.current);
+    };
+  }, []);
+
+  const activeFiltersCount = React.useMemo(() => {
+    let n = 0;
+    if (showStatusFilter && filterStatus.length) n++;
+    if (showAcuityFilter && filterAcuity.length) n++;
+    if (showFallFilter && filterFallPrediction.length) n++;
+    if (showGenderFilter && filterGender.length) n++;
+    if (showAgeFilter && filterAge.length) n++;
+    if (showFloorFilter && filterFloor.length) n++;
+    if (showUnitFilter && filterUnit.length) n++;
+    if (showVitalsFilter && filterVitals.some((v) => v.value?.trim())) n++;
+    return n;
+  }, [
+    showStatusFilter,
+    showAcuityFilter,
+    showFallFilter,
+    showGenderFilter,
+    showAgeFilter,
+    showFloorFilter,
+    showUnitFilter,
+    showVitalsFilter,
+    filterStatus,
+    filterAcuity,
+    filterFallPrediction,
+    filterGender,
+    filterAge,
+    filterFloor,
+    filterUnit,
+    filterVitals,
+  ]);
+
+  function buildFilterStringParam(params?: {
+    status?: string[];
+    statusOp?: FilterOp;
+    acuity?: string[];
+    acuityOp?: FilterOp;
+    gender?: string[];
+    genderOp?: FilterOp;
+    fall?: string[];
+    fallOp?: FilterOp;
+    age?: string[];
+    ageOp?: FilterOp;
+    floor?: string[];
+    floorOp?: FilterOp;
+    unit?: string[];
+    unitOp?: FilterOp;
+    vitals?: VitalCondition[];
+  }): string | undefined {
+    const {
+      status = filterStatus,
+      statusOp = filterStatusOp,
+      acuity = filterAcuity,
+      acuityOp = filterAcuityOp,
+      gender = filterGender,
+      genderOp = filterGenderOp,
+      fall = filterFallPrediction,
+      fallOp = filterFallPredictionOp,
+      age = filterAge,
+      ageOp = filterAgeOp,
+      floor = filterFloor,
+      floorOp = filterFloorOp,
+      unit = filterUnit,
+      unitOp = filterUnitOp,
+      vitals = filterVitals,
+    } = params ?? {};
+
+    const parts: string[] = [];
+
+    if (showStatusFilter && status.length) {
+      parts.push(`status${opToSymbol(statusOp)}${status.map(encodeURIComponent).join(',')}`);
+    }
+
+    if (showAcuityFilter && acuity.length) {
+      parts.push(
+        `acuity${opToSymbol(acuityOp)}${acuity
+          .map(toApiAcuity)
+          .map(encodeURIComponent)
+          .join(',')}`
+      );
+    }
+
+    if (showGenderFilter && gender.length) {
+      parts.push(
+        `gender${opToSymbol(genderOp)}${gender
+          .map(toApiGender)
+          .map(encodeURIComponent)
+          .join(',')}`
+      );
+    }
+
+    if (showFallFilter && fall.length) {
+      parts.push(
+        `fallPrediction${opToSymbol(fallOp)}${fall
+          .map(toApiFall)
+          .map(encodeURIComponent)
+          .join(',')}`
+      );
+    }
+
+    if (showAgeFilter && age.length && age[0]) {
+      const bounds = ageToBoundaryDates(age[0]);
+      if (bounds) {
+        const { latestDate, earliestDate, earliestDatePlusOne } = bounds;
+
+        if (ageOp === 'eq') {
+          parts.push(`birthDay<=${latestDate}`);
+          parts.push(`birthDay>${earliestDatePlusOne}`);
+        } else if (ageOp === 'neq') {
+          parts.push(`birthDay<=${earliestDate}`);
+          parts.push(`birthDay>${latestDate}`);
+        } else if (ageOp === 'gt') {
+          parts.push(`birthDay<${earliestDate}`);
+        } else if (ageOp === 'lt') {
+          parts.push(`birthDay>${latestDate}`);
+        }
+      }
+    }
+
+    if (showVitalsFilter) {
+      const cleanVitals = vitals.filter((row) => row.vital && row.value?.trim());
+      for (const row of cleanVitals) {
+        parts.push(`${row.vital}${opToSymbol(row.op)}${encodeURIComponent(row.value.trim())}`);
+      }
+    }
+
+    if (showFloorFilter && floor.length) {
+      const selectedIds = floor
+        .map((desc) => floorOptions.find((f) => f.floorDesc === desc)?.id)
+        .filter((id): id is string => !!id);
+
+      if (selectedIds.length) {
+        parts.push(`floorId${opToSymbol(floorOp)}${selectedIds.join(',')}`);
+      }
+    }
+
+    if (showUnitFilter && unit.length) {
+      const selectedIds = unit
+        .map((desc) => unitOptions.find((u) => u.unitDesc === desc)?.id)
+        .filter((id): id is string => !!id);
+
+      if (selectedIds.length) {
+        parts.push(`unitId${opToSymbol(unitOp)}${selectedIds.join(',')}`);
+      }
+    }
+
+    return parts.length ? parts.join(';') : undefined;
+  }
+
+  const buildFilterString = React.useCallback(() => buildFilterStringParam(), [
+    filterStatus,
+    filterStatusOp,
+    filterAcuity,
+    filterAcuityOp,
+    filterGender,
+    filterGenderOp,
+    filterFallPrediction,
+    filterFallPredictionOp,
+    filterAge,
+    filterAgeOp,
+    filterFloor,
+    filterFloorOp,
+    filterUnit,
+    filterUnitOp,
+    filterVitals,
+    floorOptions,
+    unitOptions,
+  ]);
+
+  const hasSearchOrFilter = React.useMemo(
+    () => !!(debouncedSearchText?.trim() || appliedFilterString),
+    [debouncedSearchText, appliedFilterString]
+  );
+
+  const shouldOmitPaging = hasSearchOrFilter && serverPageIndex === 1;
+
+  const query = React.useMemo(() => {
+    return {
+      pageIndex: shouldOmitPaging ? undefined : serverPageIndex,
+      pageSize: shouldOmitPaging ? undefined : rowsPerPage,
+      nameFilter: debouncedSearchText?.trim() || undefined,
+      orderByKey: orderBy ? mapOrderByToApiKey(orderBy) : undefined,
+      direction: orderBy ? order : undefined,
+      filterString: appliedFilterString,
+    };
+  }, [
+    shouldOmitPaging,
+    serverPageIndex,
+    rowsPerPage,
+    debouncedSearchText,
+    orderBy,
+    order,
+    appliedFilterString,
+  ]);
+
+  const lastKeyRef = React.useRef<string | null>(null);
+  const inFlightId = React.useRef(0);
+
+  const acuityColor: Record<NonNullable<Patient['acuity']>, ChipColor> = {
+    Stable: 'success',
+    Critical: 'error',
+    Observation: 'warning',
+    'N/A': 'default',
+  };
+
+  type NormalizedStatus = ReturnType<typeof normalizeStatus>;
+  const statusColor: Record<NormalizedStatus, ChipColor> = {
+    Pending: 'warning',
+    Onboarding: 'primary',
+    Approved: 'primary',
+    Active: 'success',
+    Inactive: 'default',
+    Discharged: 'primary',
+    Deceased: 'error',
+    Leave: 'warning',
+    New: 'success',
+    'N/A': 'default',
+  };
+
+  React.useEffect(() => {
+    const loadFloorAndUnitOptions = async () => {
+      try {
+        const [floorsRes, unitsRes] = await Promise.all([
+          fetchFloorOptions(selectedFacilityId),
+          fetchUnitOptions(selectedFacilityId),
+        ]);
+
+        const floors = Array.isArray(floorsRes?.data) ? floorsRes.data : floorsRes || [];
+        const units = Array.isArray(unitsRes?.data) ? unitsRes.data : unitsRes || [];
+
+        setFloorOptions(
+          floors
+            .filter((f: any) => f && f.floorId != null && f.floorDesc)
+            .map((f: any) => ({
+              id: String(f.id),
+              floorId: f.floorId,
+              floorDesc: String(f.floorDesc),
+            }))
+        );
+
+        setUnitOptions(
+          units
+            .filter((u: any) => u && u.unitId != null && u.unitDesc)
+            .map((u: any) => ({
+              id: String(u.id),
+              unitId: u.unitId,
+              unitDesc: String(u.unitDesc),
+            }))
+        );
+      } catch (e) {
+        console.error('Failed to load floor/unit options', e);
+      }
+    };
+
+    loadFloorAndUnitOptions();
+  }, [selectedFacilityId]);
+
+  React.useEffect(() => {
+    if (permissionsLoading) {
+      setNoPermission(null);
+      return;
+    }
+
+    if (facilityId !== selectedFacilityId) {
+      return;
+    }
+
+    if (viewMode !== 'ONBOARDED') {
+      lastKeyRef.current = null;
+      return;
+    }
+
+    if (!canListPatients) {
+      inFlightId.current++;
+      setPatients([]);
+      setLoading(false);
+      setServerTotalPages(1);
+      setNoPermission({ action: 'view the patients list' });
+      return;
+    }
+
+    const key = `${viewMode}|${query.pageIndex ?? 'u'}|${query.pageSize ?? 'u'}|${query.nameFilter ?? ''
+      }|${query.orderByKey ?? ''}|${query.direction ?? ''}|${query.filterString ?? ''}|fac:${selectedFacilityId ?? ''
+      }`;
+
+    if (lastKeyRef.current === key) return;
+    lastKeyRef.current = key;
+
+    const fetchId = ++inFlightId.current;
+    setLoading(true);
+
+    (async () => {
+      try {
+        const res = await fetchPatientsV2(
+          {
+            pageIndex: query.pageIndex,
+            pageSize: query.pageSize,
+            name: query.nameFilter,
+            orderByKey: query.orderByKey,
+            direction: query.direction,
+            filterString: query.filterString,
+          },
+          selectedFacilityId
+        );
+
+        if (fetchId < inFlightId.current) return;
+
+        const allPatients = (res.items ?? (res as any).data ?? []).map(mapApiRowToPatient);
+        setPatients(allPatients);
+
+        const tp = Number(res.totalPages ?? 0);
+        const ti = Number(res.totalItems ?? 0);
+        const ps = Number(res.pageSize ?? rowsPerPage);
+        const computedTotalPages = tp || Math.max(1, Math.ceil(ti / (ps || rowsPerPage)));
+
+        const apiPiNum = Number(res.pageIndex);
+        const nextPageIndex =
+          Number.isFinite(apiPiNum) && apiPiNum >= 1 ? apiPiNum : query.pageIndex ?? 1;
+
+        setServerPageIndex(nextPageIndex);
+        setServerTotalPages(Number.isFinite(computedTotalPages) ? computedTotalPages : 1);
+      } catch (err) {
+        console.error('Error fetching data:', err);
+        if (patients.length === 0) {
+          setPatients([]);
+          setServerPageIndex(1);
+          setServerTotalPages(1);
+        }
+      } finally {
+        if (fetchId === inFlightId.current) setLoading(false);
+      }
+    })();
+  }, [permissionsLoading, canListPatients, query, patients.length, facilityId, selectedFacilityId, viewMode]);
+
+  const hasPatientAlertsOnPage = React.useMemo(
+    () => patients.some((p) => (p.alertCount?.totalAlertCount ?? 0) > 0),
+    [patients]
+  );
+
+  React.useEffect(() => {
+    if (!loading)
+      setShowAlertsLegend(hasPatientAlertsOnPage);
+  }, [hasPatientAlertsOnPage, loading]);
+
+  React.useEffect(() => {
+    setServerPageIndex(1);
+  }, [debouncedSearchText, appliedFilterString, selectedFacilityId]);
+
+  const goToPage = (p: number) => {
+    if (loading) return;
+    const target = Math.max(1, Math.min(serverTotalPages, p));
+    setServerPageIndex(target);
+  };
+
+  const handleNextPage = () => {
+    if (loading) return;
+    if (serverPageIndex < serverTotalPages) setServerPageIndex(serverPageIndex + 1);
+  };
+
+  const handlePreviousPage = () => {
+    if (loading) return;
+    if (serverPageIndex > 1) setServerPageIndex(serverPageIndex - 1);
+  };
+
+  const getInitials = (name: string) =>
+    name
+      .trim()
+      .split(' ')
+      .map((w) => w.charAt(0).toUpperCase())
+      .join('')
+      .slice(0, 2);
+
+  if (!permissionsLoading && !canListPatients && !canCreatePatients && !canViewPatients) {
+    return <NoPermissionPage />;
+  }
+
+  function handlePatientAction(e: React.MouseEvent<HTMLElement>, row: Patient) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!canViewPatients) {
+      setNoPermission({ action: 'view patient' });
+      return;
+    }
+
+    const st = (row.status || '').toLowerCase();
+
+    if (st === 'pending') {
+      showStatusAlert(
+        'The patient is awaiting onboarding. This may take a few minutes — please check back shortly'
+      );
+      return;
+    }
+
+    if (st === 'onboarding') {
+      showStatusAlert(
+        'The patient is currently in the onboarding process. This may take a few minutes to complete.'
+      );
+      return;
+    }
+
+    navigate(`${basePath}/patient/${encodeIdForPath(row.healthlakeId)}`);
+  }
+
+  function clearAllFilters() {
+    setFilterAcuity([]);
+    setFilterAcuityOp('eq');
+
+    setFilterStatus([]);
+    setFilterStatusOp('eq');
+
+    setFilterGender([]);
+    setFilterGenderOp('eq');
+
+    setFilterAge([]);
+    setFilterAgeOp('eq');
+
+    setFilterFallPrediction([]);
+    setFilterFallPredictionOp('eq');
+
+    setFilterFloor([]);
+    setFilterFloorOp('eq');
+
+    setFilterUnit([]);
+    setFilterUnitOp('eq');
+
+    setFilterVitals([]);
+
+    setDraftAcuity([]);
+    setDraftAcuityOp('eq');
+
+    setDraftStatus([]);
+    setDraftStatusOp('eq');
+
+    setDraftFall([]);
+    setDraftFallOp('eq');
+
+    setDraftFloor([]);
+    setDraftFloorOp('eq');
+
+    setDraftUnit([]);
+    setDraftUnitOp('eq');
+
+    setDraftGender([]);
+    setDraftGenderOp('eq');
+
+    setDraftAge([]);
+    setDraftAgeOp('eq');
+
+    setDraftVitals([]);
+
+    setAppliedFilterString(undefined);
+    setServerPageIndex(1);
+    lastKeyRef.current = null;
+
+    setOpenFilter(null);
+    setOpenFilters(false);
+  }
+
+  function SkeletonRow() {
+    return (
+      <TableRow>
+        {showMrnColumn && (
+          <TableCell>
+            <Skeleton variant="text" sx={{ ml: 3, width: 48 }} />
+          </TableCell>
+        )}
+
+        {showNameColumn && (
+          <TableCell>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Skeleton variant="circular" width={32} height={32} />
+              <Box>
+                <Skeleton variant="text" sx={{ width: 140 }} />
+                <Skeleton variant="text" sx={{ width: 70 }} />
+              </Box>
+            </Box>
+          </TableCell>
+        )}
+
+        {showContactInfoColumn && (
+          <TableCell>
+            <Skeleton variant="text" sx={{ width: 180 }} />
+            <Skeleton variant="text" sx={{ width: 80 }} />
+          </TableCell>
+        )}
+
+        {showAlertsColumn && (
+          <TableCell>
+            <Box sx={{ display: 'flex', gap: 0.75 }}>
+              <Skeleton variant="circular" width={18} height={18} />
+              <Skeleton variant="circular" width={18} height={18} />
+              <Skeleton variant="circular" width={18} height={18} />
+            </Box>
+          </TableCell>
+        )}
+
+        {showAcuityColumn && (
+          <TableCell sx={{ pl: 1.25 }}>
+            <Skeleton variant="rectangular" sx={{ width: 64, height: 24, borderRadius: 999 }} />
+          </TableCell>
+        )}
+
+        {showEnrolledProgramColumn && (
+          <TableCell>
+            <Skeleton variant="text" sx={{ width: 80 }} />
+          </TableCell>
+        )}
+
+        {showStatusColumn && (
+          <TableCell>
+            <Skeleton variant="text" sx={{ width: 80 }} />
+          </TableCell>
+        )}
+
+        {showActionColumn && (
+          <TableCell>
+            <Skeleton variant="rectangular" sx={{ width: 56, height: 28, borderRadius: 8 }} />
+          </TableCell>
+        )}
+      </TableRow>
+    );
+  }
+
+  function MobilePatientCardSkeleton() {
+    return (
+      <Paper
+        variant="outlined"
+        sx={{
+          mb: 1.5,
+          p: 2,
+          borderRadius: 2,
+          minHeight: 120,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1,
+        }}
+      >
+        <Box display="flex" alignItems="center" gap={2} mb={0.5}>
+          <Skeleton variant="circular" width={32} height={32} />
+          <Box flex={1}>
+            <Skeleton variant="text" width={120} height={16} />
+            <Skeleton variant="text" width={80} height={12} />
+          </Box>
+          <Skeleton variant="rectangular" width={60} height={20} sx={{ borderRadius: 999 }} />
+        </Box>
+        <Divider sx={{ my: 1 }} />
+        <Box>
+          <Skeleton variant="text" width="60%" height={12} sx={{ mb: 0.5 }} />
+          <Skeleton variant="text" width="70%" height={12} sx={{ mb: 0.5 }} />
+          <Skeleton variant="text" width="50%" height={12} />
+          {showAlertsColumn && (
+            <Box sx={{ display: 'flex', gap: 0.75, mt: 1 }}>
+              <Skeleton variant="circular" width={18} height={18} />
+              <Skeleton variant="circular" width={18} height={18} />
+              <Skeleton variant="circular" width={18} height={18} />
+            </Box>
+          )}
+        </Box>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1.5 }}>
+          <Skeleton variant="rectangular" width={72} height={28} sx={{ borderRadius: 8 }} />
+        </Box>
+      </Paper>
+    );
+  }
+
+  const visibleColumnCount = [
+    showMrnColumn,
+    showNameColumn,
+    showContactInfoColumn,
+    showAlertsColumn,
+    showAcuityColumn,
+    showStatusColumn,
+    showEnrolledProgramColumn,
+    showActionColumn,
+  ].filter(Boolean).length;
+
+  if (permissionsLoading || picklistLoading) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+          <CircularProgress />
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+
+      {noPermission && (
+        <Alert
+          severity="error"
+          icon={<LockOutlined />}
+          action={
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              sx={{ borderRadius: 7 }}
+              onClick={() => setNoPermission(null)}
+            >
+              Dismiss
+            </Button>
+          }
+          sx={{ mt: 1, mx: 4, borderRadius: 2, alignItems: 'center' }}
+        >
+          <Typography sx={{ fontWeight: 700 }}>Access Restricted</Typography>
+          <Typography variant="body2">
+            You don’t have permission to {noPermission.action}. If you believe this is a mistake,
+            please contact your administrator.
+          </Typography>
+        </Alert>
+      )}
+
+      <Box
+        component="main"
+        sx={{
+          px: { xs: 2, md: 6 },
+          py: 2,
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minWidth: 0,
+          gap: 1,
+          mb: 5,
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            mb: 1,
+            gap: 1,
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'start', sm: 'center' },
+            justifyContent: 'space-between',
+          }}
+        >
+          <Box>
+            <Typography variant="h4" component="h1" sx={{ color: '#005eb8', fontWeight: 700 }}>
+              Patient Management
+            </Typography>
+            <Typography variant="body1" sx={{ color: 'text.secondary' }}>
+              Search and Manage your patients efficiently.
+            </Typography>
+          </Box>
+          <Button
+            color="primary"
+            variant="contained"
+            startIcon={<AddIcCallOutlined />}
+            size="small"
+            disabled={permissionsLoading || picklistLoading}
+            sx={{ borderRadius: 2, boxShadow: 'none', fontWeight: 600 }}
+            onClick={() => {
+              if (permissionsLoading || picklistLoading) return;
+              if (canCreatePatients) {
+                navigate(`${basePath}/patients-onboard`);
+              } else {
+                setNoPermission({ action: 'create patients' });
+              }
+            }}
+          >
+            Add Patient
+          </Button>
+        </Box>
+
+        <Divider sx={{ mb: 1 }} />
+
+        {showDraftToggle && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <SegmentedSlideToggle<'ONBOARDED' | 'DRAFTS'>
+              value={viewMode}
+              onChange={handleViewSelect}
+              options={[
+                { label: 'Onboarded Patients', value: 'ONBOARDED' },
+                { label: 'Draft Patients', value: 'DRAFTS' },
+              ]}
+              height={38}
+              width={600}
+            />
+          </Box>
+        )}
+
+        {viewMode == 'DRAFTS' ? (
+          <DraftPatientTable />
+        ) : (
+          <>
+            <Box
+              sx={{
+                display: { xs: 'flex', sm: 'none' },
+                gap: 1,
+                alignItems: 'center',
+                mb: 1.5,
+              }}
+            >
+              <TextField
+                fullWidth
+                size="small"
+                placeholder="Search"
+                disabled={permissionsLoading || picklistLoading}
+                value={searchText}
+                onChange={(e) => {
+                  if (permissionsLoading || picklistLoading) return;
+                  setSearchText(e.target.value);
+                  setServerPageIndex(1);
+                }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" />
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+              />
+              <IconButton
+                aria-label="Open filters"
+                disabled={permissionsLoading || picklistLoading}
+                onClick={() => {
+                  if (permissionsLoading || picklistLoading) return;
+
+                  setDraftStatus([...filterStatus]);
+                  setDraftStatusOp(filterStatusOp);
+
+                  setDraftAcuity([...filterAcuity]);
+                  setDraftAcuityOp(filterAcuityOp);
+
+                  setDraftFall([...filterFallPrediction]);
+                  setDraftFallOp(filterFallPredictionOp);
+
+                  setDraftGender([...filterGender]);
+                  setDraftGenderOp(filterGenderOp);
+
+                  setDraftAge([...filterAge]);
+                  setDraftAgeOp(filterAgeOp);
+
+                  setDraftFloor([...filterFloor]);
+                  setDraftFloorOp(filterFloorOp);
+
+                  setDraftUnit([...filterUnit]);
+                  setDraftUnitOp(filterUnitOp);
+
+                  setDraftVitals(filterVitals.map((v) => ({ ...v })));
+
+                  setOpenFilters(true);
+                }}
+                sx={{
+                  width: 36,
+                  height: 36,
+                  position: 'relative',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 2,
+                }}
+              >
+                <FilterAltIcon fontSize="small" />
+                {activeFiltersCount > 0 && (
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      top: 2,
+                      right: 2,
+                      width: 16,
+                      height: 16,
+                      borderRadius: '50%',
+                      bgcolor: 'primary.main',
+                      color: 'primary.contrastText',
+                      fontSize: 10,
+                      display: 'grid',
+                      placeItems: 'center',
+                    }}
+                  >
+                    {activeFiltersCount}
+                  </Box>
+                )}
+              </IconButton>
+            </Box>
+
+            <Box
+              sx={{
+                borderRadius: 1,
+                display: { xs: 'none', sm: 'flex' },
+                flexWrap: 'wrap',
+                gap: 1.5,
+                mb: 2,
+                alignItems: 'flex-end',
+              }}
+            >
+              <FormControl sx={{ flex: 1, minWidth: 280 }} size="small">
+                <FormLabel sx={{ mb: 0.5, fontSize: 13 }}>Search patients by name or MRN</FormLabel>
+                <TextField
+                  size="small"
+                  placeholder="Search"
+                  value={searchText}
+                  disabled={permissionsLoading || picklistLoading}
+                  onChange={(e) => {
+                    if (permissionsLoading || picklistLoading) return;
+                    setSearchText(e.target.value);
+                    setServerPageIndex(1);
+                  }}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchIcon fontSize="small" />
+                      </InputAdornment>
+                    ),
+                  }}
+                  sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                />
+              </FormControl>
+
+              {showFallFilter && (
+                <TableFilter
+                  id="fall"
+                  label="Fall Prediction"
+                  op={filterFallPredictionOp}
+                  setOp={setFilterFallPredictionOp}
+                  value={filterFallPrediction}
+                  setValue={(vals) => {
+                    setFilterFallPrediction(vals);
+                    lastKeyRef.current = null;
+                  }}
+                  options={['Normal', 'Low', 'Moderate', 'High', 'Emergency']}
+                  open={openFilter === 'fall'}
+                  onOpen={() => setOpenFilter('fall')}
+                  onClose={() => setOpenFilter(null)}
+                  onApply={() => {
+                    setAppliedFilterString(buildFilterString());
+                    setServerPageIndex(1);
+                    lastKeyRef.current = null;
+                  }}
+                />
+              )}
+
+              {showAcuityFilter && (
+                <TableFilter
+                  id="acuity"
+                  label="Acuity"
+                  op={filterAcuityOp}
+                  setOp={setFilterAcuityOp}
+                  value={filterAcuity}
+                  setValue={setFilterAcuity}
+                  options={['Stable', 'Observation', 'Critical']}
+                  open={openFilter === 'acuity'}
+                  onOpen={() => setOpenFilter('acuity')}
+                  onClose={() => setOpenFilter(null)}
+                  onApply={() => {
+                    setAppliedFilterString(buildFilterString());
+                    setServerPageIndex(1);
+                    lastKeyRef.current = null;
+                  }}
+                />
+              )}
+
+              {showGenderFilter && (
+                <TableFilter
+                  id="gender"
+                  label="Gender"
+                  op={filterGenderOp}
+                  setOp={setFilterGenderOp}
+                  value={filterGender}
+                  setValue={setFilterGender}
+                  options={['Male', 'Female', 'Other']}
+                  open={openFilter === 'gender'}
+                  onOpen={() => setOpenFilter('gender')}
+                  onClose={() => setOpenFilter(null)}
+                  onApply={() => {
+                    setAppliedFilterString(buildFilterString());
+                    setServerPageIndex(1);
+                    lastKeyRef.current = null;
+                  }}
+                />
+              )}
+
+              {showAgeFilter && (
+                <TableFilter
+                  id="age"
+                  label="Age"
+                  op={filterAgeOp}
+                  setOp={setFilterAgeOp}
+                  value={filterAge}
+                  setValue={setFilterAge}
+                  options={[]}
+                  open={openFilter === 'age'}
+                  onOpen={() => setOpenFilter('age')}
+                  onClose={() => setOpenFilter(null)}
+                  onApply={() => {
+                    setAppliedFilterString(buildFilterString());
+                    setServerPageIndex(1);
+                    lastKeyRef.current = null;
+                  }}
+                />
+              )}
+
+              {showVitalsFilter && (
+                <VitalFilter
+                  label="Vitals"
+                  value={filterVitals}
+                  setValue={setFilterVitals}
+                  open={openFilter === 'vitals'}
+                  onOpen={() => setOpenFilter('vitals')}
+                  onClose={() => setOpenFilter(null)}
+                  onApply={() => {
+                    setAppliedFilterString(buildFilterString());
+                    setServerPageIndex(1);
+                    lastKeyRef.current = null;
+                  }}
+                />
+              )}
+
+              {showStatusFilter && (
+                <TableFilter
+                  id="status"
+                  label="Status"
+                  op={filterStatusOp}
+                  setOp={setFilterStatusOp}
+                  value={filterStatus}
+                  setValue={setFilterStatus}
+                  options={['Pending', 'Onboarding', 'Approved', 'Active', 'Inactive', 'Discharged', 'Deceased', 'Leave', 'New']}
+                  open={openFilter === 'status'}
+                  onOpen={() => setOpenFilter('status')}
+                  onClose={() => setOpenFilter(null)}
+                  onApply={() => {
+                    setAppliedFilterString(buildFilterString());
+                    setServerPageIndex(1);
+                    lastKeyRef.current = null;
+                  }}
+                />
+              )}
+
+              {showFloorFilter && (
+                <TableFilter
+                  id="floor"
+                  label="Floor"
+                  op={filterFloorOp}
+                  setOp={setFilterFloorOp}
+                  value={filterFloor}
+                  setValue={setFilterFloor}
+                  options={floorOptions.map((f) => f.floorDesc)}
+                  open={openFilter === 'floor'}
+                  onOpen={() => setOpenFilter('floor')}
+                  onClose={() => setOpenFilter(null)}
+                  onApply={() => {
+                    setAppliedFilterString(buildFilterString());
+                    setServerPageIndex(1);
+                    lastKeyRef.current = null;
+                  }}
+                />
+              )}
+
+              {showUnitFilter && (
+                <TableFilter
+                  id="unit"
+                  label="Unit"
+                  op={filterUnitOp}
+                  setOp={setFilterUnitOp}
+                  value={filterUnit}
+                  setValue={setFilterUnit}
+                  options={unitOptions.map((u) => u.unitDesc)}
+                  open={openFilter === 'unit'}
+                  onOpen={() => setOpenFilter('unit')}
+                  onClose={() => setOpenFilter(null)}
+                  onApply={() => {
+                    setAppliedFilterString(buildFilterString());
+                    setServerPageIndex(1);
+                    lastKeyRef.current = null;
+                  }}
+                />
+              )}
+
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={activeFiltersCount === 0}
+                onClick={clearAllFilters}
+                startIcon={<FilterAltOffIcon fontSize="small" />}
+                sx={{ borderRadius: 2 }}
+              >
+                Clear filters
+              </Button>
+            </Box>
+
+            {statusAlert && (
+              <Alert
+                severity="warning"
+                icon={<WarningAmberRounded />}
+                action={
+                  <IconButton size="small" onClick={() => setStatusAlert(null)} aria-label="Dismiss">
+                    <CloseRounded fontSize="small" />
+                  </IconButton>
+                }
+                sx={{ mx: 0, mb: 1, borderRadius: 2 }}
+              >
+                {statusAlert.text}
+              </Alert>
+            )}
+            <Box
+              sx={{
+                display: { xs: 'none', sm: 'grid' },
+                gridTemplateColumns:
+                  showAlertsColumn && showAlertsLegend
+                    ? { xs: '1fr', md: 'minmax(0, 1fr) 260px' }
+                    : 'minmax(0, 1fr)',
+                gap: 1.5,
+                alignItems: 'stretch',
+              }}
+            >
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <TableContainer
+                  component={Paper}
+                  variant="outlined"
+                  sx={{
+                    borderRadius: 2,
+                    overflow: 'auto',
+                  }}
+                >
+                  <Table stickyHeader sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
+                    <TableHead>
+                      <TableRow
+                        sx={{
+                          '& .MuiTableCell-root': {
+                            bgcolor: 'grey.50',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap',
+                          },
+                        }}
+                      >
+                        {showMrnColumn && (
+                          <TableCell sx={{ width: 160, maxWidth: 160 }}>
+                            <TableSortLabel
+                              active={orderBy === 'mrn'}
+                              direction={orderBy === 'mrn' ? order : 'asc'}
+                              onClick={() => {
+                                const isAsc = orderBy === 'mrn' && order === 'asc';
+                                setOrder(isAsc ? 'desc' : 'asc');
+                                setOrderBy('mrn');
+                                setServerPageIndex(1);
+                              }}
+                            >
+                              MRN
+                            </TableSortLabel>
+                          </TableCell>
+                        )}
+
+                        {showNameColumn && (
+                          <TableCell sx={{ width: 200 }}>
+                            <TableSortLabel
+                              active={orderBy === 'name'}
+                              direction={orderBy === 'name' ? order : 'asc'}
+                              onClick={() => {
+                                const isAsc = orderBy === 'name' && order === 'asc';
+                                setOrder(isAsc ? 'desc' : 'asc');
+                                setOrderBy('name');
+                                setServerPageIndex(1);
+                              }}
+                            >
+                              Name
+                            </TableSortLabel>
+                          </TableCell>
+                        )}
+
+                        {showContactInfoColumn && (
+                          <TableCell sx={{ width: 200 }}>Contact Information</TableCell>
+                        )}
+
+                        {showAlertsColumn && (
+                          <TableCell sx={{ width: 100 }}>
+                            {viewMode === 'ONBOARDED' && (
+                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                Alerts
+                                <Tooltip title={showAlertsLegend ? 'Hide alert guide' : 'Show alert guide'}>
+                                  <IconButton size="small" onClick={() => setShowAlertsLegend((prev) => !prev)}>
+                                    <Info size={15} />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
+                            )}
+                          </TableCell>
+                        )}
+
+                        {showAcuityColumn && (
+                          <TableCell sx={{ width: 100 }}>
+                            <TableSortLabel
+                              active={orderBy === 'acuity'}
+                              direction={orderBy === 'acuity' ? order : 'asc'}
+                              onClick={() => {
+                                const isAsc = orderBy === 'acuity' && order === 'asc';
+                                setOrder(isAsc ? 'desc' : 'asc');
+                                setOrderBy('acuity');
+                                setServerPageIndex(1);
+                              }}
+                            >
+                              Acuity
+                            </TableSortLabel>
+                          </TableCell>
+                        )}
+
+                        {showEnrolledProgramColumn && (
+                          <TableCell sx={{ width: 120, textAlign: 'center' }}>
+                            Care Program
+                          </TableCell>
+                        )}
+
+                        {showStatusColumn && (
+                          <TableCell sx={{ width: 120 }}>
+                            <TableSortLabel
+                              active={orderBy === 'status'}
+                              direction={orderBy === 'status' ? order : 'asc'}
+                              onClick={() => {
+                                const isAsc = orderBy === 'status' && order === 'asc';
+                                setOrder(isAsc ? 'desc' : 'asc');
+                                setOrderBy('status');
+                                setServerPageIndex(1);
+                              }}
+                            >
+                              Status
+                            </TableSortLabel>
+                          </TableCell>
+                        )}
+
+                        {showActionColumn && (
+                          <TableCell sx={{ width: 110 }}>Action</TableCell>
+                        )}
+                      </TableRow>
+                    </TableHead>
+
+                    <TableBody>
+                      {picklistLoading || permissionsLoading || loading ? (
+                        Array.from({ length: rowsPerPage }).map((_, i) => <SkeletonRow key={i} />)
+                      ) : patients.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={visibleColumnCount || 1}>
+                            <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                              <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                No patients found
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        patients.map((row) => (
+                          <TableRow
+                            key={row.patientId}
+                            hover
+                            onClick={(e) => handlePatientAction(e, row)}
+                            sx={{ cursor: 'pointer' }}
+                          >
+                            {showMrnColumn && (
+                              <TableCell>
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    ml: 1,
+                                    whiteSpace: 'normal',
+                                    overflowWrap: 'anywhere',
+                                    wordBreak: 'break-word',
+                                    lineHeight: 1.3,
+                                  }}
+                                >
+                                  {row.mrn}
+                                </Typography>
+                              </TableCell>
+                            )}
+
+                            {showNameColumn && (
+                              <TableCell>
+                                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                  <Avatar
+                                    src={row.photo?.dataUrl || undefined}
+                                    alt={row.name}
+                                    slotProps={{
+                                      img: {
+                                        onError: (e: React.SyntheticEvent<HTMLImageElement>) => {
+                                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                        },
+                                        referrerPolicy: 'no-referrer',
+                                      },
+                                    }}
+                                    sx={{
+                                      width: 32,
+                                      height: 32,
+                                      fontSize: 14,
+                                      bgcolor: 'rgb(78, 172, 255)',
+                                      color: '#fff',
+                                    }}
+                                  >
+                                    {getInitials(row.name) || <Person2Outlined />}
+                                  </Avatar>
+
+                                  <Box>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.name}</Typography>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                      {row.age}Y, {row.gender.charAt(0).toUpperCase()}
+                                      {row.gender.slice(1)}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              </TableCell>
+                            )}
+
+                            {showContactInfoColumn && (
+                              <TableCell>
+                                {!row.contactInfo.phone && !row.contactInfo.email ? (
+                                  <Typography variant="caption">No Contact Info Available</Typography>
+                                ) : (
+                                  <>
+                                    {row.contactInfo.email && (
+                                      <Typography
+                                        variant="caption"
+                                        sx={{ fontWeight: 700, overflowWrap: 'anywhere', whiteSpace: 'normal', display: 'block' }}
+                                      >
+                                        {row.contactInfo.email}
+                                      </Typography>
+                                    )}
+                                    {row.contactInfo.phone && (
+                                      <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
+                                        {formatPhone(row.contactInfo.phone)}
+                                      </Typography>
+                                    )}
+                                  </>
+                                )}
+                              </TableCell>
+                            )}
+
+                            {showAlertsColumn && (
+                              <TableCell>
+                                {row.alertCount?.totalAlertCount ? (
+                                  <Tooltip
+                                    arrow
+                                    placement="top"
+                                    title={
+                                      <PatientAlertsTooltipContent
+                                        alerts={row.alertCount}
+                                        legendItems={patientAlertLegened}
+                                      />
+                                    }
+                                  >
+                                    <Box sx={{ display: 'inline-flex', width: '100%' }}>
+                                      <PatientAlerts alerts={row.alertCount} />
+                                    </Box>
+                                  </Tooltip>
+                                ) : (
+                                  <PatientAlerts alerts={row.alertCount} />
+                                )}
+                              </TableCell>
+                            )}
+
+                            {showAcuityColumn && (
+                              <TableCell sx={{ pl: 1.25 }}>
+                                {row.acuity === 'N/A' ? (
+                                  <Typography variant="body2" sx={{ fontWeight: 700, pl: 1 }}>
+                                    N/A
+                                  </Typography>
+                                ) : (
+                                  <Chip
+                                    size="small"
+                                    label={row.acuity}
+                                    sx={softChipSx(acuityColor[row.acuity as keyof typeof acuityColor])}
+                                  />
+                                )}
+                              </TableCell>
+                            )}
+
+                            {showEnrolledProgramColumn && (
+                              <TableCell>
+                                <Typography variant="caption" sx={{ fontWeight: 700, textAlign: 'center', display: 'block' }}>
+                                  {row.programDisplay ?? 'N/A'}
+                                </Typography>
+                              </TableCell>
+                            )}
+
+                            {showStatusColumn && (
+                              <TableCell>
+                                <Chip
+                                  size="small"
+                                  label={row.status}
+                                  sx={softChipSx(statusColor[row.status as NormalizedStatus] ?? 'default')}
+                                />
+                              </TableCell>
+                            )}
+
+                            {showActionColumn && (
+                              <TableCell>
+                                <Box sx={{ display: 'flex', gap: 2 }}>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    startIcon={<RemoveRedEye fontSize="small" />}
+                                    onClick={(e) => handlePatientAction(e, row)}
+                                    sx={{ borderRadius: 2 }}
+                                  >
+                                    View
+                                  </Button>
+                                </Box>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+                <Box
+                  sx={{
+                    mt: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                  }}
+                >
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<KeyboardArrowLeftIcon fontSize="small" />}
+                    disabled={loading || serverPageIndex <= 1}
+                    onClick={handlePreviousPage}
+                    sx={{ borderRadius: 2 }}
+                  >
+                    Previous
+                  </Button>
+
+                  <Box
+                    sx={{
+                      flex: 1,
+                      display: { xs: 'none', sm: 'flex' },
+                      gap: 0.5,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}
+                  />
+
+                  <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 0.5 }}>
+                    {Array.from({ length: serverTotalPages }, (_, i) => i + 1).map((p) => (
+                      <Button
+                        key={p}
+                        size="small"
+                        variant={p === serverPageIndex ? 'contained' : 'outlined'}
+                        onClick={() => goToPage(p)}
+                        disabled={loading}
+                        sx={{ minWidth: 36, height: 32, p: 0, borderRadius: 1.5, fontWeight: 600 }}
+                      >
+                        {p}
+                      </Button>
+                    ))}
+                  </Box>
+
+                  <Box sx={{ flex: 1, display: { xs: 'block', sm: 'none' } }} />
+                  <Box sx={{ display: { xs: 'flex', sm: 'none' }, alignItems: 'center' }}>
+                    <Select
+                      size="small"
+                      value={serverPageIndex}
+                      onChange={(e) => {
+                        if (loading) return;
+                        const v = e.target.value;
+                        if (v != null) goToPage(Number(v));
+                      }}
+                      disabled={loading}
+                      sx={{ borderRadius: 2 }}
+                    >
+                      {Array.from({ length: serverTotalPages }, (_, i) => (
+                        <MenuItem key={i + 1} value={i + 1}>
+                          Page {i + 1}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </Box>
+
+                  <Box sx={{ flex: 1 }} />
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    endIcon={<KeyboardArrowRightIcon fontSize="small" />}
+                    disabled={loading || serverPageIndex >= serverTotalPages}
+                    onClick={handleNextPage}
+                    sx={{ borderRadius: 2 }}
+                  >
+                    Next
+                  </Button>
+                </Box>
+              </Box>
+              {showAlertsColumn && showAlertsLegend &&
+                <Box sx={{ minWidth: 0 }}>
+                  <AlertsLegend items={patientAlertLegened} onClose={() => setShowAlertsLegend(false)} />
+                </Box>
+              }
+            </Box>
+
+            <Box sx={{ display: { xs: 'block', sm: 'none' }, mt: 1 }}>
+              {showAlertsColumn && showAlertsLegend && (
+                <Box sx={{ mb: 1.5 }}>
+                  <AlertsLegend items={patientAlertLegened} onClose={() => setShowAlertsLegend(false)} />
+                </Box>
+              )}
+
+              {loading ? (
+                Array.from({ length: 3 }).map((_, i) => <MobilePatientCardSkeleton key={i} />)
+              ) : patients.length === 0 ? (
+                <Paper variant="outlined" sx={{ my: 2, py: 3, textAlign: 'center', borderRadius: 2 }}>
+                  <Typography variant="body1">No patients found.</Typography>
+                </Paper>
+              ) : (
+                patients.map((row) => (
+                  <Paper
+                    key={row.patientId}
+                    variant="outlined"
+                    sx={{
+                      mb: 1.5,
+                      p: 2,
+                      borderRadius: 2,
+                      cursor: 'pointer',
+                      transition: 'box-shadow 0.2s ease, border-color 0.2s ease',
+                      '&:hover': { boxShadow: 2, borderColor: 'primary.light' },
+                    }}
+                    onClick={(e) => handlePatientAction(e, row)}
+                  >
+                    {showNameColumn && (
+                      <Box display="flex" alignItems="center" gap={2} mb={0.5}>
+                        <Avatar
+                          src={row.photo?.dataUrl || undefined}
+                          alt={row.name}
+                          slotProps={{
+                            img: {
+                              onError: (e: React.SyntheticEvent<HTMLImageElement>) => {
+                                (e.currentTarget as HTMLImageElement).style.display = 'none';
+                              },
+                              referrerPolicy: 'no-referrer',
+                            },
+                          }}
+                          sx={{
+                            width: 32,
+                            height: 32,
+                            fontSize: 14,
+                            bgcolor: 'rgb(78, 172, 255)',
+                            color: '#fff',
+                          }}
+                        >
+                          {getInitials(row.name) || <Person2Outlined />}
+                        </Avatar>
+                        <Box flex={1}>
+                          <Typography sx={{ fontWeight: 700 }}>{row.name}</Typography>
+                        </Box>
+                        <Chip
+                          size="small"
+                          label={row.status}
+                          sx={softChipSx(statusColor[row.status as NormalizedStatus] ?? 'default')}
+                        />
+                      </Box>
+                    )}
+
+                    <Divider sx={{ my: 2, mb: 2 }} />
+
+                    <Box display="flex" flexDirection="column" gap={0.5}>
+                      {showMrnColumn && (
+                        <Box display="flex" gap={0.5}>
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            MRN:
+                          </Typography>
+                          <Typography variant="body2">{row.mrn}</Typography>
+                        </Box>
+                      )}
+
+                      <Box display="flex" gap={0.5}>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          Gender:
+                        </Typography>
+                        <Typography variant="body2">{row.gender || 'N/A'}</Typography>
+                      </Box>
+
+                      <Box display="flex" gap={0.5}>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          Age:
+                        </Typography>
+                        <Typography variant="body2">{row.age || 'N/A'}</Typography>
+                      </Box>
+
+                      {showContactInfoColumn && (
+                        <Box display="flex" gap={0.5}>
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            Phone:
+                          </Typography>
+                          <Typography variant="body2">
+                            {row.contactInfo.phone ? formatPhone(row.contactInfo.phone) : 'N/A'}
+                          </Typography>
+                        </Box>
+                      )}
+
+                      {showAlertsColumn && (
+                        <Box sx={{ mt: 0.5 }}>
+                          {row.alertCount?.totalAlertCount ? (
+                            <Tooltip
+                              arrow
+                              placement="top"
+                              title={
+                                <PatientAlertsTooltipContent
+                                  alerts={row.alertCount}
+                                  legendItems={patientAlertLegened}
+                                />
+                              }
+                            >
+                              <Box sx={{ display: 'inline-flex', width: '100%' }}>
+                                <PatientAlerts alerts={row.alertCount} />
+                              </Box>
+                            </Tooltip>
+                          ) : (
+                            <PatientAlerts alerts={row.alertCount} />
+                          )}
+                        </Box>
+                      )}
+
+                      {showAcuityColumn && (
+                        <Box display="flex" gap={0.5} alignItems="center">
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            Acuity:
+                          </Typography>
+                          {row.acuity === 'N/A' ? (
+                            <Typography variant="body2">N/A</Typography>
+                          ) : (
+                            <Chip
+                              size="small"
+                              label={row.acuity}
+                              sx={softChipSx(acuityColor[row.acuity as keyof typeof acuityColor])}
+                            />
+                          )}
+                        </Box>
+                      )}
+                    </Box>
+
+                    {showActionColumn && (
+                      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1.5 }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<RemoveRedEye fontSize="small" />}
+                          onClick={(e) => handlePatientAction(e, row)}
+                          sx={{ borderRadius: 2 }}
+                        >
+                          View
+                        </Button>
+                      </Box>
+                    )}
+                  </Paper>
+                ))
+              )}
+            </Box>
+
+          </>
+        )}
+      </Box>
+
+      <Drawer
+        anchor="top"
+        open={openFilters}
+        onClose={() => setOpenFilters(false)}
+        PaperProps={{
+          sx: {
+            width: '100%',
+            maxWidth: '100%',
+            height: '100vh',
+            borderRadius: 0,
+            p: 0,
+          },
+        }}
+        ModalProps={{
+          BackdropProps: {
+            sx: {
+              backdropFilter: 'none',
+              backgroundColor: 'rgba(0,0,0,0.72)',
+            },
+          },
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            p: 2,
+            gap: 1.5,
+            bgcolor: 'background.paper',
+            position: 'relative',
+          }}
+        >
+          <IconButton
+            onClick={() => setOpenFilters(false)}
+            aria-label="Close filters"
+            sx={{ position: 'absolute', top: 8, right: 8 }}
+          >
+            <CloseRounded />
+          </IconButton>
+
+          <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
+            Filters
+          </Typography>
+
+          {showFallFilter && (
+            <TableFilter
+              label="Fall Prediction"
+              op={draftFallOp}
+              setOp={setDraftFallOp}
+              value={draftFall}
+              setValue={setDraftFall}
+              options={['Normal', 'Low', 'Moderate', 'High', 'Emergency']}
+            />
+          )}
+
+          {showAcuityFilter && (
+            <TableFilter
+              id="acuity"
+              label="Acuity"
+              op={draftAcuityOp}
+              setOp={setDraftAcuityOp}
+              value={draftAcuity}
+              setValue={setDraftAcuity}
+              options={['Stable', 'Observation', 'Critical', 'N/A']}
+            />
+          )}
+
+          {showGenderFilter && (
+            <TableFilter
+              id="gender"
+              label="Gender"
+              op={draftGenderOp}
+              setOp={setDraftGenderOp}
+              value={draftGender}
+              setValue={setDraftGender}
+              options={['Male', 'Female', 'Other']}
+            />
+          )}
+
+          {showAgeFilter && (
+            <TableFilter
+              id="age"
+              label="Age"
+              op={draftAgeOp}
+              setOp={setDraftAgeOp}
+              value={draftAge}
+              setValue={setDraftAge}
+              options={[]}
+            />
+          )}
+
+          {showVitalsFilter && (
+            <VitalFilter
+              label="Vitals"
+              value={draftVitals}
+              setValue={setDraftVitals}
+            />
+          )}
+
+          {showStatusFilter && (
+            <TableFilter
+              label="Status"
+              op={draftStatusOp}
+              setOp={setDraftStatusOp}
+              value={draftStatus}
+              setValue={setDraftStatus}
+              options={['Pending', 'Onboarding', 'Approved', 'Active', 'Inactive', 'Discharged', 'Deceased', 'Leave', 'New']}
+            />
+          )}
+
+          {showFloorFilter && (
+            <TableFilter
+              label="Floor"
+              op={draftFloorOp}
+              setOp={setDraftFloorOp}
+              value={draftFloor}
+              setValue={setDraftFloor}
+              options={floorOptions.map((f) => f.floorDesc)}
+            />
+          )}
+
+          {showUnitFilter && (
+            <TableFilter
+              label="Unit"
+              op={draftUnitOp}
+              setOp={setDraftUnitOp}
+              value={draftUnit}
+              setValue={setDraftUnit}
+              options={unitOptions.map((u) => u.unitDesc)}
+            />
+          )}
+
+          <Box sx={{ flex: 1 }} />
+
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={activeFiltersCount === 0}
+            onClick={clearAllFilters}
+            startIcon={<FilterAltOff fontSize="small" />}
+            sx={{ borderRadius: 2 }}
+          >
+            Clear filters
+          </Button>
+
+          <Button
+            variant="contained"
+            color="primary"
+            sx={{ borderRadius: 8, fontWeight: 600, boxShadow: 'none' }}
+            onClick={() => {
+              setFilterStatus(draftStatus);
+              setFilterStatusOp(draftStatusOp);
+
+              setFilterAcuity(draftAcuity);
+              setFilterAcuityOp(draftAcuityOp);
+
+              setFilterFallPrediction(draftFall);
+              setFilterFallPredictionOp(draftFallOp);
+
+              setFilterFloor(draftFloor);
+              setFilterFloorOp(draftFloorOp);
+
+              setFilterUnit(draftUnit);
+              setFilterUnitOp(draftUnitOp);
+
+              setFilterGender(draftGender);
+              setFilterGenderOp(draftGenderOp);
+
+              setFilterAge(draftAge);
+              setFilterAgeOp(draftAgeOp);
+
+              setFilterVitals(draftVitals.map((v) => ({ ...v })));
+
+              const next = buildFilterStringParam({
+                status: draftStatus,
+                statusOp: draftStatusOp,
+                acuity: draftAcuity,
+                acuityOp: draftAcuityOp,
+                fall: draftFall,
+                fallOp: draftFallOp,
+                gender: draftGender,
+                genderOp: draftGenderOp,
+                age: draftAge,
+                ageOp: draftAgeOp,
+                floor: draftFloor,
+                floorOp: draftFloorOp,
+                unit: draftUnit,
+                unitOp: draftUnitOp,
+                vitals: draftVitals,
+              });
+
+              setAppliedFilterString(next);
+              lastKeyRef.current = null;
+              setServerPageIndex(1);
+              setOpenFilters(false);
+            }}
+          >
+            Submit
+          </Button>
+        </Box>
+      </Drawer>
+    </ThemeProvider>
+  );
+}
