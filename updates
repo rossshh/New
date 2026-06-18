@@ -1,0 +1,135 @@
+<TableBody>
+  {picklistLoading || permissionsLoading || loading ? (
+    Array.from({ length: rowsPerPage }).map((_, i) => <SkeletonRow key={i} />)
+  ) : patients.length === 0 ? (
+    <TableRow>
+      <TableCell colSpan={visibleColumnCount || 1}>
+        <Box sx={{ textAlign: 'center', py: 4, color: 'text.tertiary' }}>
+          <Typography variant='body1' fontWeight="lg">No patients found</Typography>
+        </Box>
+      </TableCell>
+    </TableRow>
+  ) : (
+    patients.map((row, idx) => (
+      <TableRow
+        key={row.patientId}
+        onClick={(e) => handlePatientAction(e, row)}
+        sx={{
+          cursor: 'pointer',
+          bgcolor: idx % 2 === 1 ? 'grey.50' : 'background.paper',
+          '&:hover': { bgcolor: 'action.hover' },
+        }}
+      >
+        {showMrnColumn && (
+          <TableCell sx={bodyCellSx}>
+            <Typography
+              fontSize={14}
+              variant='body2'
+              sx={{ overflowWrap: 'anywhere', wordBreak: 'break-word', lineHeight: 1.3 }}
+            >
+              {row.mrn}
+            </Typography>
+          </TableCell>
+        )}
+
+        {showNameColumn && (
+          <TableCell sx={bodyCellSx}>
+            <Box sx={{ display: 'inline-flex', gap: 1, alignItems: 'center', textAlign: 'left' }}>
+              <Avatar
+                src={row.photo?.dataUrl || undefined}
+                alt={row.name}
+                slotProps={{
+                  img: {
+                    onError: (e: React.SyntheticEvent<HTMLImageElement>) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    },
+                    referrerPolicy: 'no-referrer',
+                  },
+                }}
+                sx={{ width: 32, height: 32, fontSize: 14, bgcolor: 'rgb(78, 172, 255)', color: '#fff' }}
+              >
+                {getInitials(row.name) || <Person2Outlined />}
+              </Avatar>
+              <Box>
+                <Typography fontWeight="bold" fontSize={14} variant='body2'>{row.name}</Typography>
+                <Typography fontSize={13} variant="body1" color="text.secondary">
+                  {row.age}Y, {row.gender.charAt(0).toUpperCase()}{row.gender.slice(1)}
+                </Typography>
+              </Box>
+            </Box>
+          </TableCell>
+        )}
+
+        {showContactInfoColumn && (
+          <TableCell sx={bodyCellSx}>
+            {!row.contactInfo.phone && !row.contactInfo.email ? (
+              <Typography fontSize={13} variant="body1" color="text.secondary">No contact info</Typography>
+            ) : (
+              <>
+                {row.contactInfo.email && (
+                  <Typography variant="body2" fontSize={13} sx={{ overflowWrap: 'anywhere' }}>
+                    {row.contactInfo.email}
+                  </Typography>
+                )}
+                {row.contactInfo.phone && (
+                  <Typography fontSize={13} variant="body2">{formatPhone(row.contactInfo.phone)}</Typography>
+                )}
+              </>
+            )}
+          </TableCell>
+        )}
+
+        {showAlertsColumn && (
+          <TableCell sx={bodyCellSx}>
+            {row.alertCount?.totalAlertCount ? (
+              <Tooltip
+                arrow
+                placement="top"
+                color='solid'
+                title={<PatientAlertsTooltipContent alerts={row.alertCount} legendItems={patientAlertLegened} />}
+              >
+                <Box sx={{ display: 'inline-flex', justifyContent: 'center' }}>
+                  <PatientAlerts alerts={row.alertCount} />
+                </Box>
+              </Tooltip>
+            ) : (
+              <PatientAlerts alerts={row.alertCount} />
+            )}
+          </TableCell>
+        )}
+
+        {showEnrolledProgramColumn && (
+          <TableCell sx={bodyCellSx}>
+            <Typography fontSize={14} variant="body2" fontWeight="bold">
+              {row.programDisplay ?? 'N/A'}
+            </Typography>
+          </TableCell>
+        )}
+
+        {showStatusColumn && (
+          <TableCell sx={bodyCellSx}>
+            <Chip
+              size="small"
+              label={row.status}
+              color={statusColor[row.status as NormalizedStatus] ?? 'default'}
+              variant="filled"
+            />
+          </TableCell>
+        )}
+
+        {showActionColumn && (
+          <TableCell sx={bodyCellSx}>
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<RemoveRedEye />}
+              onClick={(e) => handlePatientAction(e, row)}
+            >
+              View
+            </Button>
+          </TableCell>
+        )}
+      </TableRow>
+    ))
+  )}
+</TableBody>
