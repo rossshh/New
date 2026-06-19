@@ -1,0 +1,283 @@
+import * as React from 'react';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
+import SearchIcon from '@mui/icons-material/Search';
+import FilterAltIcon from '@mui/icons-material/FilterAlt';
+import {
+  Box, Button, Checkbox, Chip, Input, List,
+  Menu, MenuItem, Select, Typography,
+} from '@mui/material';
+
+/* ---------- types ---------- */
+export type FilterOp = 'eq' | 'neq' | 'gt' | 'lt';
+export type TableFilterId = 'fall' | 'acuity' | 'gender' | 'age' | 'status' | (string & {});
+
+/* ---------- props ---------- */
+export interface TableFilterProps {
+  id?: TableFilterId;
+  label: string;
+  op: FilterOp;
+  setOp: (o: FilterOp) => void;
+  value: string[];
+  setValue: (v: string[]) => void;
+  options: string[];
+  placeholder?: string;
+  open?: boolean;
+  onOpen?: () => void;
+  onClose?: () => void;
+  onApply?: () => void;
+}
+
+function TableFilter({
+  id,
+  label,
+  op,
+  setOp,
+  value,
+  setValue,
+  options,
+  placeholder = 'All',
+  open,
+  onOpen,
+  onClose,
+  onApply,
+}: TableFilterProps) {
+  const isAge = id === 'age';
+
+  const [q, setQ] = React.useState('');
+  const [inputAge, setInputAge] = React.useState(value[0] ?? '');
+  const [selectedOperator, setSelectedOperator] = React.useState<FilterOp>(op);
+
+  React.useEffect(() => setSelectedOperator(op), [op]);
+  React.useEffect(() => setInputAge(value[0] ?? ''), [value]);
+
+  const hasSelection = isAge ? !!value[0] : value.length > 0;
+  const lettersOnly = (s: string) => s.replace(/[^a-zA-Z\s]/g, '');
+
+  const filtered = React.useMemo(() => {
+    if (isAge) return options;
+    const t = q.trim().toLowerCase();
+    return t ? options.filter((o) => o.toLowerCase().includes(t)) : options;
+  }, [q, options, isAge]);
+
+  const toggle = (opt: string) => {
+    if (isAge) return;
+    setValue(value.includes(opt) ? value.filter((v) => v !== opt) : [...value, opt]);
+  };
+
+  /* ---------- anchor / open logic ---------- */
+  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+
+  const controlled = typeof open === 'boolean';
+  const [localOpen, setLocalOpen] = React.useState(false);
+  const isOpen = controlled ? (open as boolean) : localOpen;
+
+  const openDropdown = (e: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(e.currentTarget);
+    controlled ? onOpen?.() : setLocalOpen(true);
+  };
+
+  const closeDropdownRaw = () => {
+    setAnchorEl(null);
+    controlled ? onClose?.() : setLocalOpen(false);
+  };
+
+  // snapshot for revert-on-cancel
+  const appliedRef = React.useRef(false);
+  const openSnapshotValueRef = React.useRef<string[]>([]);
+  const openSnapshotOpRef = React.useRef<FilterOp>(op);
+
+  const handleOpenDropdown = (e: React.MouseEvent<HTMLElement>) => {
+    appliedRef.current = false;
+    openSnapshotValueRef.current = [...value];
+    openSnapshotOpRef.current = op;
+    openDropdown(e);
+  };
+
+  const closeAndRevert = () => {
+    if (!appliedRef.current) {
+      setOp(openSnapshotOpRef.current);
+      setValue(openSnapshotValueRef.current);
+      setInputAge(openSnapshotValueRef.current[0] ?? '');
+      setSelectedOperator(openSnapshotOpRef.current);
+    }
+    closeDropdownRaw();
+  };
+
+  const handleOperatorChange = (newOp: FilterOp) => {
+    setSelectedOperator(newOp);
+    setOp(newOp);
+  };
+
+  /* ---------- label shown on trigger button ---------- */
+  const triggerLabel = React.useMemo(() => {
+    if (!hasSelection) return label;
+    if (isAge) {
+      const opLabel =
+        selectedOperator === 'eq' ? '='
+        : selectedOperator === 'gt' ? '>'
+        : selectedOperator === 'lt' ? '<'
+        : '!=';
+      return `${label} ${opLabel} ${value[0]}`;
+    }
+    if (value.length === 1) return `${label}: ${value[0]}`;
+    return `${label}: ${value.length} selected`;
+  }, [hasSelection, isAge, selectedOperator, value, label]);
+
+  return (
+    <Box sx={{ display: 'inline-block' }}>
+      {/* ── Trigger button ── */}
+      <Button
+        size="small"
+        variant={hasSelection ? 'contained' : 'outlined'}
+        color={hasSelection ? 'primary' : 'inherit'}
+        onClick={handleOpenDropdown}
+        endIcon={<ArrowDropDownIcon sx={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />}
+        startIcon={hasSelection ? <FilterAltIcon fontSize="small" /> : undefined}
+        sx={{
+          borderRadius: 5,
+          textTransform: 'none',
+          fontWeight: hasSelection ? 600 : 400,
+          whiteSpace: 'nowrap',
+          minWidth: 90,
+        }}
+      >
+        {triggerLabel}
+      </Button>
+
+      {/* ── Dropdown menu ── */}
+      <Menu
+        anchorEl={anchorEl}
+        open={isOpen}
+        onClose={closeAndRevert}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { mt: 0.5, minWidth: 240, p: 1.5, borderRadius: 2 } } }}
+      >
+        {/* Operator select */}
+        <Box sx={{ mb: 1.5 }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block', fontWeight: 600 }}>
+            Condition
+          </Typography>
+          <Select
+            size="small"
+            fullWidth
+            value={selectedOperator}
+            onChange={(e) => handleOperatorChange(e.target.value as FilterOp)}
+          >
+            <MenuItem value="eq">{label} = (equals)</MenuItem>
+            {!isAge && <MenuItem value="neq">{label} ≠ (not equals)</MenuItem>}
+            {isAge && (
+              <>
+                <MenuItem value="gt">{label} &gt; (greater than)</MenuItem>
+                <MenuItem value="lt">{label} &lt; (less than)</MenuItem>
+              </>
+            )}
+          </Select>
+        </Box>
+
+        {/* Age input or checkbox list */}
+        {isAge ? (
+          <Box onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+            <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block', fontWeight: 600 }}>
+              Age
+            </Typography>
+            <Input
+              size="small"
+              fullWidth
+              type="number"
+              placeholder="Enter age"
+              value={inputAge}
+              onChange={(e) => {
+                let digits = e.target.value.replace(/\D+/g, '');
+                if (digits.length > 1) digits = digits.replace(/^0+/, '') || '0';
+                setInputAge(digits);
+                setValue(digits ? [digits] : []);
+              }}
+              inputProps={{ min: 1, step: 1, inputMode: 'numeric' }}
+            />
+          </Box>
+        ) : (
+          <Box onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+            <Input
+              size="small"
+              fullWidth
+              placeholder={`Search ${label}`}
+              value={q}
+              startAdornment={<SearchIcon fontSize="small" sx={{ mr: 0.5, color: 'text.disabled' }} />}
+              onChange={(e) => setQ(lettersOnly(e.target.value))}
+              sx={{ mb: 1 }}
+            />
+            <Box sx={{ maxHeight: 220, overflowY: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+              <List disablePadding>
+                {filtered.map((opt) => {
+                  const checked = value.includes(opt);
+                  return (
+                    <MenuItem
+                      key={`${id ?? label}-${opt}`}
+                      dense
+                      onClick={(e) => { e.stopPropagation(); toggle(opt); }}
+                      sx={{ gap: 1 }}
+                    >
+                      <Checkbox size="small" checked={checked} disableRipple sx={{ p: 0 }} />
+                      <Typography variant="body2">{opt}</Typography>
+                    </MenuItem>
+                  );
+                })}
+                {filtered.length === 0 && (
+                  <MenuItem disabled>
+                    <Typography variant="body2" color="text.secondary">No results</Typography>
+                  </MenuItem>
+                )}
+              </List>
+            </Box>
+
+            {/* Selected chips */}
+            {value.length > 0 && (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                {value.map((v) => (
+                  <Chip
+                    key={v}
+                    label={v}
+                    size="small"
+                    onDelete={() => setValue(value.filter((x) => x !== v))}
+                  />
+                ))}
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {/* Footer */}
+        <Box
+          sx={{ display: 'flex', gap: 1, mt: 1.5, pt: 1.5, borderTop: '1px solid', borderColor: 'divider' }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            disabled={!hasSelection}
+            onClick={() => { setValue([]); if (isAge) setInputAge(''); }}
+          >
+            Clear
+          </Button>
+          <Box sx={{ flex: 1 }} />
+          <Button
+            size="small"
+            variant="contained"
+            onClick={() => {
+              appliedRef.current = true;
+              onApply?.();
+              closeDropdownRaw();
+            }}
+          >
+            Apply
+          </Button>
+        </Box>
+      </Menu>
+    </Box>
+  );
+}
+
+export default React.memo(TableFilter);
