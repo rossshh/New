@@ -7,7 +7,8 @@ import Paper from '@mui/material/Paper';
 import Popper from '@mui/material/Popper';
 import Input from '@mui/material/OutlinedInput';
 import MenuItem from '@mui/material/MenuItem';
-import Select, { SelectChangeEvent } from '@mui/material/Select';
+import Select from '@mui/material/Select';
+import type { SelectChangeEvent } from '@mui/material/Select';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
@@ -108,6 +109,7 @@ function VitalFilter({
     const anchorRef = React.useRef<HTMLButtonElement | null>(null);
     const appliedRef = React.useRef(false);
     const snapshotRef = React.useRef<VitalCondition[]>([]);
+    const nestedSelectOpenRef = React.useRef(false);
 
     const openDropdown = () => (controlled ? onOpen?.() : setLocalOpen(true));
     const closeDropdownRaw = () => (controlled ? onClose?.() : setLocalOpen(false));
@@ -123,15 +125,16 @@ function VitalFilter({
         if (!isOpen) return;
 
         const handler = (e: Event) => {
+            // While the vital/operator Select menu is open, MUI's own backdrop
+            // briefly intercepts the trailing "click" from the same gesture that
+            // opened it (it opens on mousedown). That click would otherwise look
+            // like an outside click to us and slam this whole panel shut before
+            // the person can pick anything.
+            if (nestedSelectOpenRef.current) return;
+
             const t = e.target as Node | null;
             if (!t) return;
             if (rootRef.current && rootRef.current.contains(t)) return;
-            // The vital/operator Select menus portal to document.body (see note
-            // below), so they sit outside rootRef's DOM subtree even though
-            // they're logically part of this dropdown. Recognize them via their
-            // marker class so picking an option doesn't trigger an outside-click
-            // revert/close.
-            if (t instanceof Element && t.closest('.vital-filter-popover-menu')) return;
             closeDropdownWithMaybeRevert();
         };
 
@@ -361,8 +364,9 @@ function VitalFilter({
                                         }}
                                         onMouseDown={(e) => e.stopPropagation()}
                                         onClick={(e) => e.stopPropagation()}
+                                        onOpen={() => { nestedSelectOpenRef.current = true; }}
+                                        onClose={() => { nestedSelectOpenRef.current = false; }}
                                         MenuProps={{
-                                            PaperProps: { className: 'vital-filter-popover-menu' },
                                             sx: { zIndex: 1501 },
                                         }}
                                     >
@@ -382,8 +386,9 @@ function VitalFilter({
                                         }}
                                         onMouseDown={(e) => e.stopPropagation()}
                                         onClick={(e) => e.stopPropagation()}
+                                        onOpen={() => { nestedSelectOpenRef.current = true; }}
+                                        onClose={() => { nestedSelectOpenRef.current = false; }}
                                         MenuProps={{
-                                            PaperProps: { className: 'vital-filter-popover-menu' },
                                             sx: { zIndex: 1501 },
                                         }}
                                     >
