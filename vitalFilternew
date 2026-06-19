@@ -124,9 +124,15 @@ function VitalFilter({
 
         const handler = (e: Event) => {
             const t = e.target as Node | null;
-            if (rootRef.current && t && !rootRef.current.contains(t)) {
-                closeDropdownWithMaybeRevert();
-            }
+            if (!t) return;
+            if (rootRef.current && rootRef.current.contains(t)) return;
+            // The vital/operator Select menus portal to document.body (see note
+            // below), so they sit outside rootRef's DOM subtree even though
+            // they're logically part of this dropdown. Recognize them via their
+            // marker class so picking an option doesn't trigger an outside-click
+            // revert/close.
+            if (t instanceof Element && t.closest('.vital-filter-popover-menu')) return;
+            closeDropdownWithMaybeRevert();
         };
 
         document.addEventListener('pointerdown', handler, true);
@@ -356,11 +362,7 @@ function VitalFilter({
                                         onMouseDown={(e) => e.stopPropagation()}
                                         onClick={(e) => e.stopPropagation()}
                                         MenuProps={{
-                                            disablePortal: true,
-                                            PaperProps: {
-                                                onMouseDown: (e) => e.stopPropagation(),
-                                                onClick: (e) => e.stopPropagation(),
-                                            },
+                                            PaperProps: { className: 'vital-filter-popover-menu' },
                                             sx: { zIndex: 1501 },
                                         }}
                                     >
@@ -381,11 +383,7 @@ function VitalFilter({
                                         onMouseDown={(e) => e.stopPropagation()}
                                         onClick={(e) => e.stopPropagation()}
                                         MenuProps={{
-                                            disablePortal: true,
-                                            PaperProps: {
-                                                onMouseDown: (e) => e.stopPropagation(),
-                                                onClick: (e) => e.stopPropagation(),
-                                            },
+                                            PaperProps: { className: 'vital-filter-popover-menu' },
                                             sx: { zIndex: 1501 },
                                         }}
                                     >
