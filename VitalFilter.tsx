@@ -1,0 +1,512 @@
+import * as React from 'react';
+import { alpha } from '@mui/material/styles';
+import { grey } from '@mui/material/colors';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Paper from '@mui/material/Paper';
+import Popper from '@mui/material/Popper';
+import Input from '@mui/material/OutlinedInput';
+import MenuItem from '@mui/material/MenuItem';
+import Select, { SelectChangeEvent } from '@mui/material/Select';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import AddIcon from '@mui/icons-material/Add';
+import type { FilterOp } from '../tableFilter/TableFilter';
+
+export type VitalKey =
+    | 'heartRate'
+    | 'respiratoryRate'
+    | 'spo2'
+    | 'bodyTemperature'
+    | 'systolic'
+    | 'diastolic'
+    | 'bloodGlucose'
+    | 'bodyWeight'
+
+export interface VitalCondition {
+    vital: VitalKey;
+    op: FilterOp;
+    value: string;
+}
+
+export interface VitalFilterProps {
+    label?: string;
+    value: VitalCondition[];
+    setValue: (rows: VitalCondition[]) => void;
+    open?: boolean;
+    onOpen?: () => void;
+    onClose?: () => void;
+    onApply?: () => void;
+}
+
+const VITAL_OPTIONS: Array<{
+    label: string;
+    value: VitalKey;
+    allowsDecimal?: boolean;
+}> = [
+        { label: 'Heart Rate', value: 'heartRate' },
+        { label: 'Oxygen Saturation', value: 'spo2' },
+        { label: 'Temperature', value: 'bodyTemperature', allowsDecimal: true },
+        { label: 'Systolic', value: 'systolic' },
+        { label: 'Diastolic', value: 'diastolic' },
+        { label: 'Blood Glucose', value: 'bloodGlucose' },
+        { label: 'Weight', value: 'bodyWeight' }
+
+    ];
+
+function getVitalMeta(vital: VitalKey) {
+    return VITAL_OPTIONS.find((v) => v.value === vital);
+}
+
+function formatOp(op: FilterOp) {
+    return op === 'eq' ? '=' : op === 'neq' ? '!=' : op === 'gt' ? '>' : '<';
+}
+
+function sanitizeValue(raw: string, allowsDecimal: boolean) {
+    if (allowsDecimal) {
+        let next = raw.replace(/[^0-9.]/g, '');
+        const parts = next.split('.');
+        if (parts.length > 2) next = `${parts[0]}.${parts.slice(1).join('')}`;
+        return next;
+    }
+
+    let next = raw.replace(/\D+/g, '');
+    if (next.length > 1) next = next.replace(/^0+/, '') || '0';
+    return next;
+}
+
+function normalizeValue(raw: string, allowsDecimal: boolean) {
+    if (!raw) return '';
+
+    if (allowsDecimal) {
+        const n = Number.parseFloat(raw);
+        if (!Number.isFinite(n) || n < 0) return '';
+        return String(n);
+    }
+
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1) return '';
+    return String(n);
+}
+
+function VitalFilter({
+    label = 'Vitals',
+    value,
+    setValue,
+    open,
+    onOpen,
+    onClose,
+    onApply,
+}: VitalFilterProps) {
+    const controlled = typeof open === 'boolean';
+    const [localOpen, setLocalOpen] = React.useState(false);
+    const isOpen = controlled ? open : localOpen;
+
+    const rootRef = React.useRef<HTMLDivElement | null>(null);
+    const anchorRef = React.useRef<HTMLButtonElement | null>(null);
+    const appliedRef = React.useRef(false);
+    const snapshotRef = React.useRef<VitalCondition[]>([]);
+
+    const openDropdown = () => (controlled ? onOpen?.() : setLocalOpen(true));
+    const closeDropdownRaw = () => (controlled ? onClose?.() : setLocalOpen(false));
+
+    const closeDropdownWithMaybeRevert = React.useCallback(() => {
+        if (!appliedRef.current) {
+            setValue(snapshotRef.current.map((row) => ({ ...row })));
+        }
+        closeDropdownRaw();
+    }, [setValue]);
+
+    React.useEffect(() => {
+        if (!isOpen) return;
+
+        const handler = (e: Event) => {
+            const t = e.target as Node | null;
+            if (rootRef.current && t && !rootRef.current.contains(t)) {
+                closeDropdownWithMaybeRevert();
+            }
+        };
+
+        document.addEventListener('pointerdown', handler, true);
+        document.addEventListener('click', handler, true);
+
+        return () => {
+            document.removeEventListener('pointerdown', handler, true);
+            document.removeEventListener('click', handler, true);
+        };
+    }, [isOpen, closeDropdownWithMaybeRevert]);
+
+    // IMPORTANT:
+    // Material doesn't have a Joy-style Dropdown/MenuButton compound component
+    // that auto-manages its own open/close. We replicate the same "only close on
+    // Apply / Escape / outside-click" behavior explicitly here, anchoring a
+    // Popper to the trigger Button.
+    const handleTriggerClick = () => {
+        if (isOpen) {
+            closeDropdownWithMaybeRevert();
+            return;
+        }
+        appliedRef.current = false;
+        snapshotRef.current = value.map((row) => ({ ...row }));
+        openDropdown();
+    };
+
+    const addRow = () => {
+        setValue([
+            ...value,
+            {
+                vital: 'heartRate',
+                op: 'gt',
+                value: '',
+            },
+        ]);
+    };
+
+    const updateRow = (index: number, patch: Partial<VitalCondition>) => {
+        setValue(value.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+    };
+
+    const removeRow = (index: number) => {
+        setValue(value.filter((_, i) => i !== index));
+    };
+
+    const clearAll = () => {
+        setValue([]);
+    };
+
+    const activeRows = value.filter((row) => row.value.trim());
+    const hasSelection = activeRows.length > 0;
+
+    return (
+        <Box
+            ref={rootRef}
+            tabIndex={-1}
+            onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    closeDropdownWithMaybeRevert();
+                }
+            }}
+            sx={{
+                display: { xs: 'block', sm: 'inline-block' },
+                width: { xs: '100%', sm: 'auto' },
+                outline: 'none',
+                position: 'relative',
+            }}
+        >
+            <Button
+                ref={anchorRef}
+                onClick={handleTriggerClick}
+                variant="outlined"
+                size="small"
+                sx={(t) => {
+                    const isHighlighted = hasSelection || isOpen;
+                    return {
+                        height: 32,
+                        borderRadius: '6px',
+                        textTransform: 'none',
+                        borderColor: isHighlighted ? t.palette.primary.main : t.palette.divider,
+                        borderWidth: isHighlighted ? '2px' : '1px',
+                        backgroundColor: isHighlighted ? t.palette.action.hover : t.palette.background.paper,
+                        px: 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 0.75,
+                        whiteSpace: 'nowrap',
+                        width: { xs: '100%', sm: 'auto' },
+                        maxWidth: { xs: '100%', sm: 420 },
+                        boxShadow: '0px 1px 2px 0px rgba(21, 21, 21, 0.08)',
+                        '&:hover': {
+                            backgroundColor: t.palette.action.hover,
+                            borderColor: isHighlighted ? t.palette.primary.main : t.palette.divider,
+                            borderWidth: isHighlighted ? '2px' : '1px',
+                        },
+                    };
+                }}
+            >
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {label}
+                </Typography>
+
+                {hasSelection && (
+                    <>
+                        <Box
+                            component="span"
+                            sx={(t) => ({
+                                ml: 0.25,
+                                px: 0.5,
+                                borderRadius: '6px',
+                                fontSize: 12,
+                                lineHeight: 1.4,
+                                bgcolor: alpha(t.palette.primary.main, 0.16),
+                                color: t.palette.primary.main,
+                            })}
+                        >
+                            {activeRows.length}
+                        </Box>
+
+                        <Typography
+                            variant="body2"
+                            sx={{
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                maxWidth: 140,
+                            }}
+                        >
+                            {`${getVitalMeta(activeRows[0].vital)?.label ?? activeRows[0].vital} ${formatOp(
+                                activeRows[0].op
+                            )} ${activeRows[0].value}`}
+                        </Typography>
+
+                        {activeRows.length > 1 && (
+                            <Box
+                                component="span"
+                                sx={{
+                                    ml: 0.25,
+                                    px: 0.5,
+                                    borderRadius: '6px',
+                                    fontSize: 12,
+                                    lineHeight: 1.4,
+                                    bgcolor: grey[200],
+                                    color: 'text.secondary',
+                                }}
+                            >
+                                +{activeRows.length - 1}
+                            </Box>
+                        )}
+                    </>
+                )}
+
+                <ArrowDropDownIcon sx={{ ml: 1.25 }} />
+            </Button>
+
+            <Popper
+                open={!!isOpen}
+                anchorEl={anchorRef.current}
+                placement="bottom-end"
+                disablePortal
+                sx={{ zIndex: 1300 }}
+            >
+                <Paper
+                    variant="outlined"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    sx={{
+                        minWidth: { xs: '93vw', sm: 520 },
+                        maxWidth: '100%',
+                        mt: 0.5,
+                        p: 1,
+                        borderRadius: '10px',
+                        boxShadow: 3,
+                    }}
+                >
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 1,
+                        }}
+                    >
+                        {value.length === 0 && (
+                            <Box sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderRadius: 1,
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                py: 2,
+                            }}>
+                                <Typography variant="body2" color="text.secondary">
+                                    No vitals added yet.
+                                </Typography>
+                            </Box>
+                        )}
+
+                        {value.map((row, index) => {
+                            const meta = getVitalMeta(row.vital);
+                            const allowsDecimal = !!meta?.allowsDecimal;
+
+                            return (
+                                <Box
+                                    key={`${row.vital}-${index}`}
+                                    sx={{
+                                        display: 'grid',
+                                        gridTemplateColumns: { xs: '1fr', sm: '1.35fr 0.9fr 1fr auto' },
+                                        gap: 1,
+                                        alignItems: 'center',
+                                        p: 1,
+                                        borderRadius: 1,
+                                        border: '1px solid',
+                                        borderColor: 'divider',
+                                    }}
+                                >
+                                    <Select<VitalKey>
+                                        size="small"
+                                        value={row.vital}
+                                        onChange={(e: SelectChangeEvent<VitalKey>) => {
+                                            const v = e.target.value as VitalKey;
+                                            if (!v) return;
+                                            const nextMeta = getVitalMeta(v);
+                                            const normalized = normalizeValue(row.value, !!nextMeta?.allowsDecimal);
+                                            updateRow(index, { vital: v, value: normalized });
+                                        }}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => e.stopPropagation()}
+                                        MenuProps={{
+                                            disablePortal: true,
+                                            PaperProps: {
+                                                onMouseDown: (e) => e.stopPropagation(),
+                                                onClick: (e) => e.stopPropagation(),
+                                            },
+                                            sx: { zIndex: 1501 },
+                                        }}
+                                    >
+                                        {VITAL_OPTIONS.map((opt) => (
+                                            <MenuItem key={opt.value} value={opt.value}>
+                                                {opt.label}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+
+                                    <Select<FilterOp>
+                                        size="small"
+                                        value={row.op}
+                                        onChange={(e: SelectChangeEvent<FilterOp>) => {
+                                            const v = e.target.value as FilterOp;
+                                            if (v) updateRow(index, { op: v });
+                                        }}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => e.stopPropagation()}
+                                        MenuProps={{
+                                            disablePortal: true,
+                                            PaperProps: {
+                                                onMouseDown: (e) => e.stopPropagation(),
+                                                onClick: (e) => e.stopPropagation(),
+                                            },
+                                            sx: { zIndex: 1501 },
+                                        }}
+                                    >
+                                        <MenuItem value="eq">=</MenuItem>
+                                        <MenuItem value="neq">!=</MenuItem>
+                                        <MenuItem value="gt">&gt;</MenuItem>
+                                        <MenuItem value="lt">&lt;</MenuItem>
+                                    </Select>
+
+                                    <Input
+                                        size="small"
+                                        placeholder="Enter value"
+                                        value={row.value}
+                                        onChange={(e) => {
+                                            updateRow(index, {
+                                                value: sanitizeValue(e.target.value, allowsDecimal),
+                                            });
+                                        }}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => e.stopPropagation()}
+                                        inputProps={{
+                                            inputMode: allowsDecimal ? 'decimal' : 'numeric',
+                                        }}
+                                        onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                                            const allowed = [
+                                                'Backspace',
+                                                'Delete',
+                                                'Tab',
+                                                'ArrowLeft',
+                                                'ArrowRight',
+                                                'Home',
+                                                'End',
+                                            ];
+                                            if (allowed.includes(e.key)) return;
+
+                                            if (allowsDecimal) {
+                                                if (['e', 'E', '+', '-'].includes(e.key)) {
+                                                    e.preventDefault();
+                                                    return;
+                                                }
+                                                if (!/^\d$/.test(e.key) && e.key !== '.') {
+                                                    e.preventDefault();
+                                                }
+                                                return;
+                                            }
+
+                                            if (['e', 'E', '+', '-', '.', ','].includes(e.key)) {
+                                                e.preventDefault();
+                                                return;
+                                            }
+                                            if (!/^\d$/.test(e.key)) e.preventDefault();
+                                        }}
+                                        onBlur={() => {
+                                            updateRow(index, {
+                                                value: normalizeValue(row.value, allowsDecimal),
+                                            });
+                                        }}
+                                        onWheel={(e: React.WheelEvent<HTMLInputElement>) => {
+                                            (e.target as HTMLInputElement).blur();
+                                        }}
+                                    />
+
+                                    <IconButton
+                                        size="small"
+                                        color="error"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeRow(index);
+                                        }}
+                                    >
+                                        <DeleteOutlineIcon fontSize="small" />
+                                    </IconButton>
+                                </Box>
+                            );
+                        })}
+
+                        <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
+                            <Button
+                                size="small"
+                                variant="outlined"
+                                startIcon={<AddIcon />}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    addRow();
+                                }}
+                            >
+                                Add vital
+                            </Button>
+
+                            <Box sx={{ flex: 1 }} />
+
+                            <Button
+                                size="small"
+                                variant="outlined"
+                                disabled={!value.length}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    clearAll();
+                                }}
+                            >
+                                Clear
+                            </Button>
+
+                            <Button
+                                size="small"
+                                variant="contained"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    appliedRef.current = true;
+                                    onApply?.();
+                                    closeDropdownRaw();
+                                }}
+                            >
+                                Apply
+                            </Button>
+                        </Box>
+                    </Box>
+                </Paper>
+            </Popper>
+        </Box>
+    );
+}
+
+export default React.memo(VitalFilter);
